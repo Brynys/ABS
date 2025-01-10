@@ -33,13 +33,29 @@ String makeHtmlHeader(const String &title) {
             ".navbar a{color:#fff;text-decoration:none;margin-right:20px;font-weight:bold;padding:6px 12px;border-radius:4px;transition:background 0.3s;}"
             ".navbar a:hover{background:#45a049;}"
             ".container{max-width:1000px;margin:80px auto 20px auto;padding:20px;background:#fff;border-radius:8px;box-shadow:0 0 6px rgba(0,0,0,0.1);}"
-            "h1{margin-top:0;}"
-            ".btn{background:#4CAF50;color:#fff;padding:6px 12px;border:none;cursor:pointer;}"
+            "h1{margin-top:0; margin-bottom:0.5em;}"
+            "h3{margin-top:1.2em; margin-bottom:0.5em;}"
+            "p{margin:0.8em 0; line-height:1.4;}"
+            "hr{margin:1.5em 0; border:none; border-top:1px solid #ddd;}"
+            ".btn{background:#4CAF50;color:#fff;padding:6px 12px;border:none;cursor:pointer;border-radius:4px;}"
             ".btn:hover{background:#45a049;}"
             ".table-container{width:100%;overflow-x:auto;margin-top:10px;}"
             "table{border-collapse:collapse;min-width:600px;width:100%;}"
             "th,td{border:1px solid #ccc;padding:6px;text-align:left;}"
             "th{background:#f9f9f9;}"
+            ".form-group{margin-bottom:1em;}"
+            "label{font-weight:bold;display:block;margin-bottom:0.3em;}"
+            "input[type='text'],input[type='password'],input[type='number'],select{"
+            "  width:100%;max-width:300px;padding:6px;margin-bottom:0.5em;box-sizing:border-box;"
+            "  border:1px solid #ccc;border-radius:4px;"
+            "}"
+            /* Přidáme menší styl pro "plátno" grafů, aby nebyly zbytečně roztažené */
+            ".chart-container{"
+            "  width:100%;"
+            "  max-width:600px;"   /* Můžete upravit dle potřeby */
+            "  height:300px;"      /* Můžete upravit dle potřeby */
+            "  margin-bottom:30px;"
+            "}"
             "</style>";
 
     html += "</head><body>";
@@ -75,7 +91,7 @@ static inline void startAsyncWebServer() {
    * 1) Hlavní stránka "/"
    *    - ukáže základní info
    *    - zobrazí poslední data v tabulce
-   *    - pokud je Wi-Fi připojeno, načte se chart.js a vykreslí se graf
+   *    - pokud je Wi-Fi připojeno, načte se chart.js a vykreslí se grafy
    */
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
     String html;
@@ -84,7 +100,7 @@ static inline void startAsyncWebServer() {
     // Zobrazení stavu AP
     html += "<p>AP SSID: <strong>" + String(AP_SSID) + "</strong>, "
             "heslo: <strong>" + String(AP_PASS) + "</strong></p>";
-    html += "<p>AP IP: " + WiFi.softAPIP().toString() + "</p>";
+    html += "<p>AP IP: <strong>" + WiFi.softAPIP().toString() + "</strong></p>";
 
     // Zobrazení stavu STA (domácí Wi-Fi)
     if(WiFi.status() == WL_CONNECTED) {
@@ -115,45 +131,74 @@ static inline void startAsyncWebServer() {
     html += "</table>";
     html += "</div>"; // konec .table-container
 
-    // Pokud jsme online, zobrazíme graf
+    // Pokud jsme online, zobrazíme 4 grafy
     if(WiFi.status() == WL_CONNECTED) {
-      html += "<hr><h3>Graf (Chart.js)</h3>";
-      html += "<canvas id='myChart' width='100%' height='50'></canvas>";
-      
-      // 1) Vložíme script pro chart.js (CDN). Použijeme např. cdn.jsdelivr.net
+      html += "<hr><h3>Grafy (Chart.js)</h3>";
+
+      // 1) Přidáme 4 plochy pro 4 grafy
+      html += "<div class='chart-container'><canvas id='chartSoil'></canvas></div>";
+      html += "<div class='chart-container'><canvas id='chartTemp'></canvas></div>";
+      html += "<div class='chart-container'><canvas id='chartHum'></canvas></div>";
+      html += "<div class='chart-container'><canvas id='chartLight'></canvas></div>";
+
+      // 2) Vložíme script pro Chart.js (CDN)
       html += "<script src='https://cdn.jsdelivr.net/npm/chart.js'></script>";
-      
-      // 2) Vytvoříme pole s daty (timestamp a soilMoisture jen jako příklad)
+
+      // 3) Připravíme data pro X-osu = timestamps
       html += "<script>";
       html += "const labels = [";
       for(int i = (count > 0 ? 0 : -1); i < count; i++) {
-        // předpokládáme, že dataBuffer jsou chronologicky, raději si to ideálně ověřte
-        // Sem dáme reálný timestamp nebo index
         if(i >= 0) {
           html += "'" + String(dataBuffer[i].timestamp) + "'";
           if(i < count - 1) html += ",";
         }
       }
       html += "];";
-      
-      // Data pro soilMoisture:
+
+      // Data pro soilMoisture
       html += "const soilData = [";
       for(int i = 0; i < count; i++) {
         html += String(dataBuffer[i].soilMoisture);
         if(i < count - 1) html += ",";
       }
       html += "];";
-      
-      // 3) Inicializujeme graf (line)
-      html += "const ctx = document.getElementById('myChart').getContext('2d');"
-              "new Chart(ctx, {"
+
+      // Data pro temperature
+      html += "const tempData = [";
+      for(int i = 0; i < count; i++) {
+        html += String(dataBuffer[i].temperature);
+        if(i < count - 1) html += ",";
+      }
+      html += "];";
+
+      // Data pro humidity
+      html += "const humData = [";
+      for(int i = 0; i < count; i++) {
+        html += String(dataBuffer[i].humidity);
+        if(i < count - 1) html += ",";
+      }
+      html += "];";
+
+      // Data pro light
+      html += "const lightData = [";
+      for(int i = 0; i < count; i++) {
+        html += String(dataBuffer[i].lightLevel);
+        if(i < count - 1) html += ",";
+      }
+      html += "];";
+
+      // 4) Vytvoříme 4 samostatné grafy (line)
+      // -- Soil Moisture --
+      html += "const ctxSoil = document.getElementById('chartSoil').getContext('2d');"
+              "new Chart(ctxSoil, {"
               "  type: 'line',"
               "  data: {"
               "    labels: labels,"
               "    datasets: [{"
-              "      label: 'Soil Moisture',"
+              "      label: 'Soil Moisture (%)',"
               "      data: soilData,"
               "      borderColor: 'rgba(75, 192, 192, 1)',"
+              "      backgroundColor: 'rgba(75, 192, 192, 0.2)',"
               "      tension: 0.1"
               "    }]"
               "  },"
@@ -162,11 +207,71 @@ static inline void startAsyncWebServer() {
               "    maintainAspectRatio: false"
               "  }"
               "});";
+
+      // -- Temperature --
+      html += "const ctxTemp = document.getElementById('chartTemp').getContext('2d');"
+              "new Chart(ctxTemp, {"
+              "  type: 'line',"
+              "  data: {"
+              "    labels: labels,"
+              "    datasets: [{"
+              "      label: 'Temperature (°C)',"
+              "      data: tempData,"
+              "      borderColor: 'rgba(255, 99, 132, 1)',"
+              "      backgroundColor: 'rgba(255, 99, 132, 0.2)',"
+              "      tension: 0.1"
+              "    }]"
+              "  },"
+              "  options: {"
+              "    responsive: true,"
+              "    maintainAspectRatio: false"
+              "  }"
+              "});";
+
+      // -- Humidity --
+      html += "const ctxHum = document.getElementById('chartHum').getContext('2d');"
+              "new Chart(ctxHum, {"
+              "  type: 'line',"
+              "  data: {"
+              "    labels: labels,"
+              "    datasets: [{"
+              "      label: 'Humidity (%)',"
+              "      data: humData,"
+              "      borderColor: 'rgba(54, 162, 235, 1)',"
+              "      backgroundColor: 'rgba(54, 162, 235, 0.2)',"
+              "      tension: 0.1"
+              "    }]"
+              "  },"
+              "  options: {"
+              "    responsive: true,"
+              "    maintainAspectRatio: false"
+              "  }"
+              "});";
+
+      // -- Light --
+      html += "const ctxLight = document.getElementById('chartLight').getContext('2d');"
+              "new Chart(ctxLight, {"
+              "  type: 'line',"
+              "  data: {"
+              "    labels: labels,"
+              "    datasets: [{"
+              "      label: 'Light',"
+              "      data: lightData,"
+              "      borderColor: 'rgba(255, 206, 86, 1)',"
+              "      backgroundColor: 'rgba(255, 206, 86, 0.2)',"
+              "      tension: 0.1"
+              "    }]"
+              "  },"
+              "  options: {"
+              "    responsive: true,"
+              "    maintainAspectRatio: false"
+              "  }"
+              "});";
+
       html += "</script>";
     }
     
     html += makeHtmlFooter();
-    
     request->send(200, "text/html", html);
   });
   
@@ -214,7 +319,8 @@ static inline void startAsyncWebServer() {
 
         // Formulář s <select>
         html += "<form method='POST' action='/setwifi'>";
-        html += "<label>Vyberte síť:</label><br>";
+        html += "<div class='form-group'>";
+        html += "<label>Vyberte síť:</label>";
         html += "<select name='ssid'>";
         for (int i = 0; i < g_foundNetworks; i++) {
           String ssidFound = g_scannedSSIDs[i];
@@ -222,11 +328,15 @@ static inline void startAsyncWebServer() {
           html += ssidFound; 
           html += "</option>";
         }
-        html += "</select><br><br>";
+        html += "</select>";
+        html += "</div>";
 
         // Heslo
-        html += "<label>Heslo:</label><br>";
-        html += "<input type='password' name='pass'><br><br>";
+        html += "<div class='form-group'>";
+        html += "<label>Heslo:</label>";
+        html += "<input type='password' name='pass'>";
+        html += "</div>";
+
         // Odeslat
         html += "<input type='submit' class='btn' value='Uložit Wi-Fi'>";
         html += "</form>";
@@ -239,8 +349,16 @@ static inline void startAsyncWebServer() {
     // Zachováme formulář pro ruční zadání
     html += "<hr><p>Nebo zadat ručně (skrytou síť):</p>";
     html += "<form method='POST' action='/setwifi'>";
-    html += "<label>SSID:</label><br><input type='text' name='ssid'><br><br>";
-    html += "<label>Heslo:</label><br><input type='password' name='pass'><br><br>";
+    html += "<div class='form-group'>";
+    html += "<label>SSID:</label>";
+    html += "<input type='text' name='ssid'>";
+    html += "</div>";
+    
+    html += "<div class='form-group'>";
+    html += "<label>Heslo:</label>";
+    html += "<input type='password' name='pass'>";
+    html += "</div>";
+
     html += "<input type='submit' class='btn' value='Uložit Wi-Fi'>";
     html += "</form>";
 
@@ -265,18 +383,29 @@ static inline void startAsyncWebServer() {
     // Formulář nastavení periody a objemu zalévání 
     html += "<h3>Zalévání</h3>";
     html += "<form method='POST' action='/setwatering'>";
+
+    html += "<div class='form-group'>";
     html += "<label>Litry za den:</label>";
-    html += "<input type='number' step='0.1' name='litersPerDay' value='" + String(litersPerDay) + "'><br>";
+    html += "<input type='number' step='0.1' name='litersPerDay' value='" + String(litersPerDay) + "'>";
+    html += "</div>";
+
+    html += "<div class='form-group'>";
     html += "<label>Interval (hodiny):</label>";
-    html += "<input type='number' step='1' name='wateringIntervalHours' value='" + String(wateringIntervalHours) + "'><br>";
+    html += "<input type='number' step='1' name='wateringIntervalHours' value='" + String(wateringIntervalHours) + "'>";
+    html += "</div>";
+
     html += "<input type='submit' class='btn' value='Uložit Zalévání'>";
     html += "</form>";
 
     // Formulář pro jednorázové zalití
     html += "<hr><h3>Jednorázové zalití</h3>";
     html += "<form method='POST' action='/runoneshot'>";
+
+    html += "<div class='form-group'>";
     html += "<label>Litry:</label>";
-    html += "<input type='number' step='0.1' name='oneTimeLiters' value='1.0'><br>";
+    html += "<input type='number' step='0.1' name='oneTimeLiters' value='1.0'>";
+    html += "</div>";
+
     html += "<input type='submit' class='btn' value='Zalít'>";
     html += "</form>";
 
@@ -284,7 +413,7 @@ static inline void startAsyncWebServer() {
     request->send(200, "text/html", html);
   });
 
-  // ---- PONECHÁME PŮVODNÍ POST ENDPOINTY ----
+  // ---- PŮVODNÍ POST ENDPOINTY ----
 
   // Obsluha pro /setwifi (POST)
   server.on("/setwifi", HTTP_POST, [](AsyncWebServerRequest *request){

@@ -3,8 +3,6 @@
   - Připojuje se na WiFi
   - Připojuje se k WebSocket serveru
   - Přijímá JSON s "cmd":"RUN_PUMP" a "duration"
-  - Zapne čerpadlo nastavením D2 do OUTPUT HIGH
-  - Vypne čerpadlo nastavením D2 do INPUT
 */
 
 #include <ESP8266WiFi.h>
