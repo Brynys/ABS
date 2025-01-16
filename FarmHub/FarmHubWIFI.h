@@ -5,23 +5,17 @@
 #include <ESP8266WiFi.h>
 #include <vector>
 
-// Vše "static", abychom se vyhnuli multiple definition
+// Výchozí AP (Access Point) údaje
 static const char* AP_SSID = "FarmHub-AP";
 static const char* AP_PASS = "farmhub123";
 
-/** 
- * Globální proměnné pro asynchronní skenování 
- */
-static bool g_isScanning      = false;  // Běží teď sken?
-static bool g_scanComplete    = false;  // Je hotovo?
-static int  g_foundNetworks   = 0;      // Kolik sítí jsme našli?
+// Proměnné pro asynchronní skenování
+static bool g_isScanning    = false;
+static bool g_scanComplete  = false;
+static int  g_foundNetworks = 0;
 static std::vector<String> g_scannedSSIDs;
 
-/**
- * Vytvoří AP + STA mód, aby se k němu mohly
- * připojit senzory (AP), a zároveň se to mohlo
- * připojit k domácí Wi-Fi (STA).
- */
+// Spuštění AP + STA módu
 static inline void setupWifiAP() {
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(AP_SSID, AP_PASS);
@@ -35,10 +29,7 @@ static inline void setupWifiAP() {
   Serial.println(WiFi.softAPIP());
 }
 
-/**
- * Pokus o připojení k domácí Wi-Fi (SSID + heslo).
- * Vrací true při úspěchu, false při neúspěchu.
- */
+// Připojení k domácí Wi-Fi
 static inline bool connectToHomeWiFi(const String &ssid, const String &pass) {
   if (ssid.isEmpty() || pass.isEmpty()) {
     Serial.println("Home WiFi credentials empty, skipping...");
@@ -46,7 +37,6 @@ static inline bool connectToHomeWiFi(const String &ssid, const String &pass) {
   }
   Serial.print("Connecting to: ");
   Serial.println(ssid);
-
   WiFi.begin(ssid.c_str(), pass.c_str());
 
   unsigned long start = millis();
@@ -56,7 +46,7 @@ static inline bool connectToHomeWiFi(const String &ssid, const String &pass) {
   }
   Serial.println();
 
-  if(WiFi.status() == WL_CONNECTED) {
+  if (WiFi.status() == WL_CONNECTED) {
     Serial.println("Connected to home WiFi!");
     Serial.print("IP: ");
     Serial.println(WiFi.localIP());
@@ -67,55 +57,36 @@ static inline bool connectToHomeWiFi(const String &ssid, const String &pass) {
   }
 }
 
-/**
- * Získání lokální IP (buď STA IP, nebo AP IP).
- */
+// Získání lokální IP
 static inline IPAddress getLocalIP() {
   return WiFi.localIP();
 }
 
-/**
- * Spustí asynchronní sken sítí.
- * - Pokud už sken běží, neudělá nic.
- */
+// Spuštění asynchronního skenu
 static inline void startAsyncScan() {
   if (!g_isScanning) {
-    Serial.println("Spouštím asynchronní skenování Wi-Fi...");
+    Serial.println("Starting async Wi-Fi scan...");
     g_isScanning   = true;
     g_scanComplete = false;
     g_foundNetworks = -1;
-
-    // Zahájí asynchronní sken na pozadí
     WiFi.scanNetworks(true);
   }
 }
 
-/**
- * Kontroluje stav asynchronního skenu, 
- * pokud je hotovo, uloží výsledky do g_scannedSSIDs,
- * a znovu zapne AP (WiFi.mode(WIFI_AP_STA)).
- *
- * Tuto funkci je třeba volat pravidelně (např. v loop())
- * nebo alespoň pokaždé, než zobrazíte stránku /wifi.
- */
+// Kontrola, zda sken doběhl a uložení výsledků
 static inline void checkAsyncScan() {
-  if (!g_isScanning) {
-    return; // nic neděláme
-  }
+  if (!g_isScanning) return;
 
   int result = WiFi.scanComplete();
   if (result == WIFI_SCAN_RUNNING) {
-    // stále probíhá
-    return;
+    return; // stále probíhá
   }
   else if (result == WIFI_SCAN_FAILED) {
-    // někdy se stává, že scan selže - zkusíme znovu
-    Serial.println("Sken selhal, opakuji...");
+    Serial.println("Scan failed, retrying...");
     WiFi.scanDelete();
     WiFi.scanNetworks(true);
   }
   else {
-    // Hotovo, result >= 0 = počet sítí
     g_isScanning    = false;
     g_scanComplete  = true;
     g_foundNetworks = result;
@@ -126,11 +97,11 @@ static inline void checkAsyncScan() {
     }
     WiFi.scanDelete();
 
-    // Obnovíme AP, kdyby se stihlo vypnout
+    // Obnovíme AP pro jistotu
     WiFi.mode(WIFI_AP_STA);
     WiFi.softAP(AP_SSID, AP_PASS);
 
-    Serial.printf("Asynchronní sken dokončen, nalezeno %d sítí.\n", result);
+    Serial.printf("Scan complete, found %d networks.\n", result);
   }
 }
 

@@ -6,12 +6,10 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
-// Třeba 128x64
+// OLED displej (např. 128x64)
 static Adafruit_SSD1306 display(128, 64, &Wire, -1);
 
-/**
- * Inicializace OLED displeje
- */
+// Inicializace displeje
 static inline void initDisplay() {
   Wire.begin();
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
@@ -22,9 +20,7 @@ static inline void initDisplay() {
   display.display();
 }
 
-/**
- * Zobrazení 2 řádků textu
- */
+// Zobrazení dvou řádků textu
 static inline void displayInfo(const String &line1, const String &line2) {
   display.clearDisplay();
   display.setTextSize(1);
@@ -36,12 +32,9 @@ static inline void displayInfo(const String &line1, const String &line2) {
   display.display();
 }
 
-/**
- * Pokud potřebuješ něco v loopu dokreslovat, dej sem
- */
+// Pravidelná aktualizace displeje (volitelná)
 static inline void updateDisplayLoop() {
-  // Například jednou za x ms něco updatovat...
-  // Tady klidně nic.
+  // Lze doplnit vlastní logiku
 }
 
 #endif // FARM_HUB_DISPLAY_H

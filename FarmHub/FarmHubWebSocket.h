@@ -9,61 +9,49 @@
 #include "FarmHubWebServer.h"
 #include "FarmHubData.h"
 
-// Jedna statická instance WebSocketu:
+// Jedna instance WebSocketu na endpointu /ws
 static AsyncWebSocket ws("/ws");
 
-// ----------------------------------------------------------
-// Pomocná funkce, která pošle VŠEM připojeným klientům JSON:
-//   { "cmd":"RUN_PUMP", "duration": <durationSec> }
-// ----------------------------------------------------------
+// Odeslání příkazu RUN_PUMP všem klientům (JSON: { "cmd":"RUN_PUMP", "duration":X })
 void broadcastRunPump(int durationSec) {
-  // Složíme JSON (ručně či přes ArduinoJson)
-  // Tady to uděláme “ručně”:
   String msg = "{\"cmd\":\"RUN_PUMP\",\"duration\":";
   msg += durationSec;
   msg += "}";
-  
-  // Odeslání všem
   ws.textAll(msg);
 }
 
-// ----------------------------------------------------------
-static inline void onWsEvent(AsyncWebSocket * server, 
-                             AsyncWebSocketClient * client, 
-                             AwsEventType type, 
-                             void * arg, 
-                             uint8_t *data, size_t len) 
+// Obsluha událostí na WebSocketu
+static inline void onWsEvent(AsyncWebSocket *server,
+                             AsyncWebSocketClient *client,
+                             AwsEventType type,
+                             void *arg,
+                             uint8_t *data,
+                             size_t len) 
 {
-  if(type == WS_EVT_CONNECT) {
-    Serial.printf("WebSocket client #%u connected from %s\n", 
+  if (type == WS_EVT_CONNECT) {
+    Serial.printf("Client #%u connected from %s\n", 
                   client->id(), client->remoteIP().toString().c_str());
     client->text("{\"msg\":\"Welcome sensor!\"}");
   }
-  else if(type == WS_EVT_DISCONNECT) {
-    Serial.printf("WebSocket client #%u disconnected.\n", client->id());
+  else if (type == WS_EVT_DISCONNECT) {
+    Serial.printf("Client #%u disconnected.\n", client->id());
   }
-  else if(type == WS_EVT_DATA) {
-    data[len] = 0; 
+  else if (type == WS_EVT_DATA) {
+    data[len] = 0;
     String payload = (char*)data;
-    Serial.printf("WS data from #%u: %s\n", client->id(), payload.c_str());
+    Serial.printf("Data from #%u: %s\n", client->id(), payload.c_str());
 
     StaticJsonDocument<256> doc;
     DeserializationError err = deserializeJson(doc, payload);
-    if(!err) {
+    if (!err) {
       SensorReading sr;
-      sr.sensorID     = doc["sensorID"]   | String("unknown");
+      sr.sensorID     = doc["sensorID"]   | "unknown";
       sr.soilMoisture = doc["soil"]       | 0.0;
       sr.temperature  = doc["temp"]       | 0.0;
       sr.humidity     = doc["hum"]        | 0.0;
       sr.lightLevel   = doc["light"]      | 0.0;
-
-      // Použijeme čas v Unix formátu (počet sekund od r.1970):
-      time_t now = time(nullptr);
-      sr.timestamp = (unsigned long)now;  
-      // Případně sr.timestamp = now; pokud je sr.timestamp typu time_t.
-
+      sr.timestamp    = (unsigned long)time(nullptr);
       storeSensorData(sr);
-
       client->text("{\"status\":\"OK\"}");
     } else {
       client->text("{\"status\":\"ERROR\",\"reason\":\"JSON parse\"}");
@@ -71,7 +59,7 @@ static inline void onWsEvent(AsyncWebSocket * server,
   }
 }
 
-// ----------------------------------------------------------
+// Spuštění WebSocketu a jeho přidání do serveru
 static inline void startWebSocket() {
   ws.onEvent(onWsEvent);
   server.addHandler(&ws);

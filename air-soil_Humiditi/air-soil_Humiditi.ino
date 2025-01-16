@@ -1,44 +1,30 @@
-/*
-   Script pro odesílání dat o půdní vlhkosti (A0) a teploty/vlhkosti vzduchu (DHT11)
-   přes WebSocket na ESP8266.
-
-   Odesílá JSON ve tvaru například:
-   {
-     "sensorID": "soilDHTsensor",
-     "soil": <analogValue 0..1023>,
-     "temp": <float>,
-     "hum": <float>
-   }
-*/
-
+// Senzor pro půdní vlhkost (A0) a teplotu/vlhkost (DHT11) + WebSocket na ESP8266.
 #include <ESP8266WiFi.h>
 #include <WebSocketsClient.h>
 #include <ArduinoJson.h>
 #include <DHT.h>
 
-// -- WIFI nastavení (podle vašich údajů) --
+// Wi-Fi údaje
 const char* WIFI_SSID = "FarmHub-AP";
 const char* WIFI_PASS = "farmhub123";
 
-// -- WebSocket nastavení (podle vašeho serveru) --
+// WebSocket údaje
 const char* WS_HOST = "192.168.4.1";
 const int   WS_PORT = 80;
 const char* WS_PATH = "/ws";
 
-// -- Piny pro čidla --
+// Pin DHT11 a definice typu
 #define DHT_PIN  D2
 #define DHTTYPE  DHT11
 
 DHT dht(DHT_PIN, DHTTYPE);
 WebSocketsClient webSocket;
 
-// -- Časování pro periodické odesílání dat --
+// Interval pro odeslání dat (ms)
 unsigned long lastSendTime = 0;
-const unsigned long SEND_INTERVAL = 90000; // 5 sekund
+const unsigned long SEND_INTERVAL = 90000; // 90 s
 
-// -------------------------------------------------------------------
-// Připojení k WiFi
-// -------------------------------------------------------------------
+// Připojení k Wi-Fi
 void connectToWifi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
@@ -47,7 +33,7 @@ void connectToWifi() {
   Serial.print(WIFI_SSID);
 
   unsigned long start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
+  while (WiFi.status() != WL_CONNECTED && (millis() - start) < 10000) {
     delay(200);
     Serial.print(".");
   }
@@ -62,98 +48,67 @@ void connectToWifi() {
   }
 }
 
-// -------------------------------------------------------------------
-// Obsluha WebSocket událostí
-// -------------------------------------------------------------------
+// WebSocket události
 void webSocketEvent(WStype_t type, uint8_t* payload, size_t length) {
   switch (type) {
     case WStype_DISCONNECTED:
       Serial.println("WebSocket disconnected!");
       break;
-
     case WStype_CONNECTED:
       Serial.println("WebSocket connected!");
-      // Po připojení můžeme poslat jednorázovou identifikaci
       webSocket.sendTXT("{\"sensorID\":\"soilDHTsensor\"}");
       break;
-
     case WStype_TEXT: {
-      // Pokud chceme zpracovávat příchozí zprávy (třeba příkazy), můžeme tady
-      payload[length] = 0; // ukončení řetězce
+      payload[length] = 0;
       String msg = (char*)payload;
       Serial.print("WS message: ");
       Serial.println(msg);
-      // Případné zpracování JSON, příkazy apod...
-      }
-      break;
-
+    } break;
     default:
-      // Nezpracované typy
       break;
   }
 }
 
-// -------------------------------------------------------------------
 // setup()
-// -------------------------------------------------------------------
 void setup() {
   Serial.begin(115200);
-
-  // Inicializace DHT senzoru
   dht.begin();
-
-  // Připojení k WiFi
   connectToWifi();
-
-  // Inicializace WebSocketu
   webSocket.begin(WS_HOST, WS_PORT, WS_PATH);
   webSocket.onEvent(webSocketEvent);
 }
 
-// -------------------------------------------------------------------
 // loop()
-// -------------------------------------------------------------------
 void loop() {
-  // WebSocket klient musí být ve smyčce
   webSocket.loop();
 
-  // Každých SEND_INTERVAL ms přečteme data a odešleme
+  // Odesílání dat v intervalu
   if (millis() - lastSendTime >= SEND_INTERVAL) {
     lastSendTime = millis();
 
-    // 1) Přečíst půdní vlhkost z A0 (analog)
-    //    Hodnota je 0..1023
-    float soilVal = analogRead(A0);
-
-    // 2) Přečíst teplotu a vlhkost z DHT11
+    float soilVal = analogRead(A0);  
     float temperature = dht.readTemperature();
     float humidity    = dht.readHumidity();
 
-    // Ověřit, zda DHT vrátil validní data
     if (isnan(temperature) || isnan(humidity)) {
       Serial.println("Chyba čtení z DHT senzoru!");
-      return; 
+      return;
     }
 
-    // 3) Vytvořit JSON s daty
+    // Přepočet 0..1023 -> odhad vlhkosti v %
     StaticJsonDocument<256> doc;
     doc["sensorID"] = "soilDHTsensor";
-    doc["soil"]     = (100.0f - (soilVal/(10.23f)));
-    doc["temp"]     = temperature;  // °C
-    doc["hum"]      = humidity;     // %
+    doc["soil"]     = (100.0f - (soilVal / 10.23f)); 
+    doc["temp"]     = temperature;
+    doc["hum"]      = humidity;
 
-    // 4) Serializovat do stringu
     String out;
     serializeJson(doc, out);
-
-    // 5) Odeslat přes WebSocket
     webSocket.sendTXT(out);
 
-    // -- Ladicí výpis do Serialu --
     Serial.print("Odesílám: ");
     Serial.println(out);
   }
 
-  // Krátká pauza, aby smyčka neběžela příliš rychle
   delay(20);
 }
