@@ -7,7 +7,6 @@
 #include "FarmHubData.h"
 #include "FarmHubWebServer.h"
 #include "FarmHubWebSocket.h"
-// případně #include "FarmHubWebSocket.h", pokud máš i websockets
 
 void setup() {
   Serial.begin(115200);
@@ -19,17 +18,21 @@ void setup() {
   // Načteme uloženou konfiguraci
   loadUserConfig(); // homeSsid, homePass, moistureThreshold...
 
-  // OLED
+  // OLED displej
   initDisplay();
   displayInfo("Starting...", "");
 
-  // Vytvoří AP
+  // Vytvoříme AP (Access Point) pro konfiguraci v případě potíží
   setupWifiAP();
 
   // Zkusit se připojit k domácí Wi-Fi
   bool wifiOK = connectToHomeWiFi(homeSsid, homePass);
-  if(wifiOK) {
+  if (wifiOK) {
     displayInfo("WiFi OK", WiFi.localIP().toString());
+
+    // >>> ZDE zavoláme synchronizaci času přes NTP <<<
+    setupTimeFromNTP();
+    
   } else {
     displayInfo("WiFi fail", "AP only");
   }
@@ -37,15 +40,15 @@ void setup() {
   // Spustíme asynchronní webserver
   startAsyncWebServer();
   startWebSocket();
-
 }
 
 void loop() {
-  // Případně update displeje
+  // Aktualizace displeje (pokud máte měnící se údaje, např. čas, stav…)
   updateDisplayLoop();
 
-  // Kontrola zalévání
+  // Kontrola zalévání (automatika/manual)
   checkAndIrrigate();
 
   delay(50);
+
 }

@@ -4,6 +4,8 @@
 #include <Arduino.h>
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
+#include <time.h>
+#include "FarmHubConfig.h"
 #include "FarmHubWebServer.h"
 #include "FarmHubData.h"
 
@@ -45,26 +47,25 @@ static inline void onWsEvent(AsyncWebSocket * server,
     String payload = (char*)data;
     Serial.printf("WS data from #%u: %s\n", client->id(), payload.c_str());
 
-    // Pokus o parse JSON senzorů (soil, temp, atd.)
     StaticJsonDocument<256> doc;
     DeserializationError err = deserializeJson(doc, payload);
     if(!err) {
-      // Máme validní JSON, např.:
-      // { "sensorID":"mySensor","soil":45.6,"temp":21.3,"hum":50,"light":123 }
       SensorReading sr;
       sr.sensorID     = doc["sensorID"]   | String("unknown");
       sr.soilMoisture = doc["soil"]       | 0.0;
       sr.temperature  = doc["temp"]       | 0.0;
       sr.humidity     = doc["hum"]        | 0.0;
       sr.lightLevel   = doc["light"]      | 0.0;
-      sr.timestamp    = millis();
+
+      // Použijeme čas v Unix formátu (počet sekund od r.1970):
+      time_t now = time(nullptr);
+      sr.timestamp = (unsigned long)now;  
+      // Případně sr.timestamp = now; pokud je sr.timestamp typu time_t.
 
       storeSensorData(sr);
 
-      // Odpovíme senzoru
       client->text("{\"status\":\"OK\"}");
     } else {
-      // Chyba v JSON
       client->text("{\"status\":\"ERROR\",\"reason\":\"JSON parse\"}");
     }
   }

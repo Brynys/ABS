@@ -8,7 +8,6 @@
 
 /**
  * Pin pro čerpadlo. 
- * (Pokud hub už fyzicky čerpadlo nespíná, můžeš ho odstranit.)
  */
 static const int PIN_PUMP = 5; 
 
@@ -106,62 +105,51 @@ static inline String getDataForPeriod(unsigned long fromMs, unsigned long toMs) 
 extern void broadcastRunPump(int durationSec);
 
 /**
- * V configu máme extern float moistureThreshold; 
- * extern int waterAmountML; (možná už nepotřebné)
- * 
- * NOVÉ:
- * extern float litersPerDay;           // kolik litrů za den
- * extern float wateringIntervalHours;  // co X hodin
- *
- * Pro time-based logiku potřebujeme pamatovat si, 
- * kdy proběhlo poslední zalití:
- */
-static unsigned long lastWateringTime = 0;
-
-/**
  * checkAndIrrigate:
- * - zkontroluje, zda uplynul nastavený interval
- * - pokud ano a vlhkost je menší než threshold, spočítá kolik litrů na session 
- *   a kolik sekund čerpadlo poběží, a vyšle broadcastRunPump(sec).
+ *  - Pokud je autoWatering == true
+ *  - Vyhledá poslední záznam se sensorID == "soilDHTsensor"
+ *  - Pokud je soilMoisture < moistureThreshold, pustí čerpadlo na waterAmountML (v s).
  */
 static inline void checkAndIrrigate() {
+  // Pokud buffer nic neobsahuje, skončíme.
   if(dataBuffer.empty()) return;
 
-  // externy z FarmHubConfig.h
+  // Proměnné z FarmHubConfig.h
+  extern bool  autoWatering;
   extern float moistureThreshold;
-  extern float litersPerDay;
-  extern float wateringIntervalHours;
+  extern int   waterAmountML;
 
-  auto &last = dataBuffer.back();
-
-  // 1) Časová kontrola: Uplynulo aspoň wateringIntervalHours od posledního zalití?
-  unsigned long now = millis();
-  unsigned long intervalMs = (unsigned long)(wateringIntervalHours * 3600000UL);
-  if((now - lastWateringTime) < intervalMs) {
-    // Ještě není čas na další zalití
+  // Je zapnuté automatické zalévání?
+  if(!autoWatering) {
+    // Když je manuální, nic neřešíme
     return;
   }
 
-  // 2) Kontrola vlhkosti půdy
-  if(last.soilMoisture < moistureThreshold) {
-    // Vypočítáme, kolik zaléváme při každém intervalu
-    // timesPerDay = 24 / wateringIntervalHours
-    float timesPerDay = 24.0f / wateringIntervalHours;
-    float litersPerSession = litersPerDay / timesPerDay;
+  // Najdeme poslední záznam konkrétně od senzoru 'soilDHTsensor'
+  const SensorReading* lastSoilReading = nullptr;
+  for (auto it = dataBuffer.rbegin(); it != dataBuffer.rend(); ++it) {
+    if (it->sensorID == "soilDHTsensor") {
+      lastSoilReading = &(*it);
+      break;
+    }
+  }
 
-    // Čerpadlo 120 l/h -> 1 litr za 30 sekund
-    // => sessionSeconds = litersPerSession * 30
-    float sessionSeconds = litersPerSession * 30.0f;
-    int secInt = (int)ceil(sessionSeconds);
+  // Pokud jsme žádný záznam z "soilDHTsensor" nenašli, končíme
+  if (!lastSoilReading) {
+    return;
+  }
 
-    Serial.printf("[Hub] Soil=%.1f%% < %.1f%% => instructing pump for %d s\n",
-                  last.soilMoisture, moistureThreshold, secInt);
+  // Pokud je vlhkost menší než stanovený práh, zalijeme
+  if (lastSoilReading->soilMoisture < moistureThreshold) {
+    // Přepočet mililitrů na sekundy 
+    double secondsFloat = waterAmountML * 0.03d;
+    int   secInt       = (int)round(secondsFloat);
+
+    Serial.printf("[Auto] Soil=%.1f%% < %.1f%% => Pump for %d s\n",
+                  lastSoilReading->soilMoisture, moistureThreshold, secInt);
 
     // Pošleme zavlažovacímu klientovi příkaz RUN_PUMP
     broadcastRunPump(secInt);
-
-    // Zaznamenáme čas zalití
-    lastWateringTime = now;
   }
 }
 

@@ -34,7 +34,7 @@ WebSocketsClient webSocket;
 
 // -- Časování pro periodické odesílání dat --
 unsigned long lastSendTime = 0;
-const unsigned long SEND_INTERVAL = 15000; // 5 sekund
+const unsigned long SEND_INTERVAL = 90000; // 5 sekund
 
 // -------------------------------------------------------------------
 // Připojení k WiFi
@@ -123,7 +123,7 @@ void loop() {
 
     // 1) Přečíst půdní vlhkost z A0 (analog)
     //    Hodnota je 0..1023
-    int soilVal = analogRead(A0);
+    float soilVal = analogRead(A0);
 
     // 2) Přečíst teplotu a vlhkost z DHT11
     float temperature = dht.readTemperature();
@@ -138,7 +138,7 @@ void loop() {
     // 3) Vytvořit JSON s daty
     StaticJsonDocument<256> doc;
     doc["sensorID"] = "soilDHTsensor";
-    doc["soil"]     = soilVal;      // 0..1023
+    doc["soil"]     = (100.0f - (soilVal/(10.23f)));
     doc["temp"]     = temperature;  // °C
     doc["hum"]      = humidity;     // %
 

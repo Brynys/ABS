@@ -33,7 +33,7 @@ WebSocketsClient webSocket;
 
 // -- Časování pro periodické odesílání dat (ms) --
 unsigned long lastSendTime = 0;
-const unsigned long SEND_INTERVAL = 5000; // např. 5 s (5000 ms)
+const unsigned long SEND_INTERVAL = 90000; 
 
 // ------------------------------------------------------
 //  Připojení k WiFi
@@ -134,7 +134,7 @@ void loop() {
 
     // 2) Vytvořit JSON s daty
     StaticJsonDocument<256> doc;
-    doc["sensorID"] = "bh1750Sensor";
+    doc["sensorID"] = "lightsensor";
     doc["light"]    = luxValue;  // Hodnota v luxech
 
     // 3) Serializovat do stringu
