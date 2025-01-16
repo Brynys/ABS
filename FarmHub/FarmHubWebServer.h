@@ -27,9 +27,6 @@ static AsyncWebServer server(80);
 // 1) Uložíme velké řetězce (HTML/CSS/JS) do PROGMEM
 // ------------------------------------------------------------
 
-/**
- * Hlavní HEAD + styl. Do %TITLE% se pak za běhu doplní název stránky.
- */
 static const char PAGE_HEAD[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html>
@@ -69,6 +66,8 @@ static const char PAGE_HEAD[] PROGMEM = R"rawliteral(
 <body>
   <nav class="navbar">
     <a href="/">Přehled</a>
+    <a href="/charts">Grafy</a>
+    <a href="/history">Log</a>
     <a href="/wifi">Nastavení Wi-Fi</a>
     <a href="/watering">Zalévání</a>
   </nav>
@@ -94,9 +93,6 @@ static const char PAGE_FOOTER[] PROGMEM = R"rawliteral(
 
 /**
  * Volitelný JavaScript pro Chart.js. (Můžete dát i do externího .js)
- * Tady je pro ukázku vcelku, také uložený v PROGMEM.
- * 
- * Bude se vkládat pouze pokud jsme připojeni k Wi-Fi (WL_CONNECTED).
  */
 static const char CHART_JS[] PROGMEM = R"rawliteral(
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -198,12 +194,8 @@ function drawLightChart(labels, dataLight) {
 </script>
 )rawliteral";
 
-/**
- * Funkce, která vyrobí HTML hlavičku. Výsledek dostaneme v klasickém `String`,
- * ale samotný kostra HTML je v PROGMEM (PAGE_HEAD).
- */
+// Vytvoření HTML hlavičky
 String makeHtmlHeader(const String &title) {
-    // Rezervujeme si místo (není povinné, ale pomáhá snížit fragmentaci)
     String html;
     html.reserve(2048);
 
@@ -213,10 +205,10 @@ String makeHtmlHeader(const String &title) {
     // 2) Nahradíme %TITLE% v textu skutečným `title`
     html.replace("%TITLE%", title);
 
-    // 3) Pak přidáme <h1>title</h1> – část je už v PAGE_HEAD, jen doplníme text
+    // 3) Pak doplníme text do <h1> (část je už v PAGE_HEAD)
     html += title;
 
-    // 4) Dále vložíme pokračování (uzavření <h1>)
+    // 4) Vložíme pokračování (uzavření <h1>)
     html += FPSTR(PAGE_HEAD_END);
 
     return html;
@@ -235,6 +227,7 @@ String makeHtmlFooter() {
 static inline void startAsyncWebServer() {
 
     // Hlavní stránka "/"
+    // ==================================================
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
       String html = makeHtmlHeader("FarmHub - Přehled");
 
@@ -251,7 +244,7 @@ static inline void startAsyncWebServer() {
         html += "<p><strong>Nepřipojeno k domácí Wi-Fi.</strong></p>";
       }
 
-      // Najdeme poslední data senzorů
+      // Najdeme poslední data senzorů (soilDHT a light)
       SensorReading lastSoilDHT;
       bool foundSoilDHT = false;
       SensorReading lastLight;
@@ -298,156 +291,191 @@ static inline void startAsyncWebServer() {
       }
       html += "</tr></table></div>";
 
-      // Pokud jsme online, zobrazíme grafy
-      if(WiFi.status() == WL_CONNECTED) {
-        html += "<hr><h3>Grafy</h3>";
-        // Čtyři plochy pro čtyři grafy
-        html += "<div class='chart-container'><canvas id='chartSoil'></canvas></div>";
-        html += "<div class='chart-container'><canvas id='chartTemp'></canvas></div>";
-        html += "<div class='chart-container'><canvas id='chartHum'></canvas></div>";
-        html += "<div class='chart-container'><canvas id='chartLight'></canvas></div>";
+      // Zobrazíme volnou RAM (pro kontrolu)
+      html += "<p>Volné místo v RAM: " + String(ESP.getFreeHeap()) + " B</p>";
 
-        // Vložíme kód pro Chart.js (z PROGMEM)
-        html += FPSTR(CHART_JS);
+      // Dokončíme stránku
+      html += makeHtmlFooter();
+      request->send(200, "text/html", html);
+    });
 
-        // Příprava dat pro JavaScript
-        // (V původním kódu se to generuje "html += "...", tady ponecháme stejnou logiku.)
-        std::vector<float> soilTimes;
-        std::vector<float> soilValues;
-        std::vector<float> tempValues;
-        std::vector<float> humValues;
-        std::vector<float> lightTimes;
-        std::vector<float> lightValues;
+    // Stránka "/charts" - pouze grafy
+    // ==================================================
+    server.on("/charts", HTTP_GET, [](AsyncWebServerRequest *request){
+      String html = makeHtmlHeader("FarmHub - Grafy");
 
-        int c = dataBuffer.size();
-        for(int i=0; i < c; i++){
-          const auto &d = dataBuffer[i];
-          if(d.soilMoisture == 0 && d.temperature == 0 &&
-             d.humidity == 0 && d.lightLevel == 0) {
-            continue;
-          }
-          if(d.sensorID == "soilDHTsensor") {
-            soilTimes.push_back((float)d.timestamp);
-            soilValues.push_back(d.soilMoisture);
-            tempValues.push_back(d.temperature);
-            humValues.push_back(d.humidity);
-          }
-          else if(d.sensorID == "lightsensor") {
-            lightTimes.push_back((float)d.timestamp);
-            lightValues.push_back(d.lightLevel);
-          }
+      if(WiFi.status() != WL_CONNECTED){
+        // Pokud není Wi-Fi, jen upozorníme, že grafy budou prázdné
+        html += "<p><strong>Není připojení k Wi-Fi, grafy se nemusí vykreslit.</strong></p>";
+      }
+
+      // Vložíme 4 plátna pro 4 grafy
+      html += "<hr><h3>Grafy senzorů</h3>";
+      html += "<div class='chart-container'><canvas id='chartSoil'></canvas></div>";
+      html += "<div class='chart-container'><canvas id='chartTemp'></canvas></div>";
+      html += "<div class='chart-container'><canvas id='chartHum'></canvas></div>";
+      html += "<div class='chart-container'><canvas id='chartLight'></canvas></div>";
+
+      // Vložíme kód pro Chart.js
+      html += FPSTR(CHART_JS);
+
+      // Připravíme data pro JavaScript
+      std::vector<float> soilTimes;
+      std::vector<float> soilValues;
+      std::vector<float> tempValues;
+      std::vector<float> humValues;
+      std::vector<float> lightTimes;
+      std::vector<float> lightValues;
+
+      // Projdeme celý dataBuffer a rozdělíme data podle sensorID
+      for (auto &d : dataBuffer) {
+        if(d.soilMoisture == 0 && d.temperature == 0 &&
+           d.humidity == 0 && d.lightLevel == 0) {
+          continue;
         }
-
-        // Omezíme počet bodů a seřadíme:
-        auto keepLastN = [&](std::vector<float> &times,
-                             std::vector<float> &v1,
-                             std::vector<float> &v2,
-                             std::vector<float> &v3)
-        {
-          const size_t CHART_MAX_POINTS = 6; // např. jen 30 bodů
-          if(times.size() > CHART_MAX_POINTS) {
-            size_t startIndex = times.size() - CHART_MAX_POINTS;
-            times.erase(times.begin(), times.begin() + startIndex);
-            v1.erase(v1.begin(), v1.begin() + startIndex);
-            if(!v2.empty()) v2.erase(v2.begin(), v2.begin() + startIndex);
-            if(!v3.empty()) v3.erase(v3.begin(), v3.begin() + startIndex);
-          }
-        };
-        keepLastN(soilTimes, soilValues, tempValues, humValues);
-
-        {
-          std::vector<float> dummy2, dummy3;
-          keepLastN(lightTimes, lightValues, dummy2, dummy3);
+        if(d.sensorID == "soilDHTsensor") {
+          soilTimes.push_back((float)d.timestamp);
+          soilValues.push_back(d.soilMoisture);
+          tempValues.push_back(d.temperature);
+          humValues.push_back(d.humidity);
         }
+        else if(d.sensorID == "lightsensor") {
+          lightTimes.push_back((float)d.timestamp);
+          lightValues.push_back(d.lightLevel);
+        }
+      }
 
-        auto sortByTime = [](std::vector<float> &times,
-                             std::vector<float> &v1,
-                             std::vector<float> &v2,
-                             std::vector<float> &v3){
-          for(size_t i=0; i < times.size(); i++){
-            for(size_t j=0; j < times.size()-1; j++){
-              if(times[j] > times[j+1]) {
-                // prohození
-                std::swap(times[j], times[j+1]);
-                std::swap(v1[j], v1[j+1]);
-                if(!v2.empty()) std::swap(v2[j], v2[j+1]);
-                if(!v3.empty()) std::swap(v3[j], v3[j+1]);
-              }
+      // Omezení počtu bodů
+      auto keepLastN = [&](std::vector<float> &times,
+                           std::vector<float> &v1,
+                           std::vector<float> &v2,
+                           std::vector<float> &v3)
+      {
+        const size_t CHART_MAX_POINTS = 30; 
+        if(times.size() > CHART_MAX_POINTS) {
+          size_t startIndex = times.size() - CHART_MAX_POINTS;
+          times.erase(times.begin(), times.begin() + startIndex);
+          v1.erase(v1.begin(), v1.begin() + startIndex);
+          if(!v2.empty()) v2.erase(v2.begin(), v2.begin() + startIndex);
+          if(!v3.empty()) v3.erase(v3.begin(), v3.begin() + startIndex);
+        }
+      };
+      keepLastN(soilTimes, soilValues, tempValues, humValues);
+      {
+        std::vector<float> dummy2, dummy3;
+        keepLastN(lightTimes, lightValues, dummy2, dummy3);
+      }
+
+      // Seřadíme podle času (vzestupně)
+      auto sortByTime = [](std::vector<float> &times,
+                           std::vector<float> &v1,
+                           std::vector<float> &v2,
+                           std::vector<float> &v3){
+        for(size_t i=0; i < times.size(); i++){
+          for(size_t j=0; j < times.size()-1; j++){
+            if(times[j] > times[j+1]) {
+              std::swap(times[j], times[j+1]);
+              std::swap(v1[j], v1[j+1]);
+              if(!v2.empty()) std::swap(v2[j], v2[j+1]);
+              if(!v3.empty()) std::swap(v3[j], v3[j+1]);
             }
           }
-        };
-        if(!soilTimes.empty()) {
-          sortByTime(soilTimes, soilValues, tempValues, humValues);
         }
-        {
-          std::vector<float> dummy2, dummy3;
-          sortByTime(lightTimes, lightValues, dummy2, dummy3);
-        }
+      };
+      if(!soilTimes.empty()) {
+        sortByTime(soilTimes, soilValues, tempValues, humValues);
+      }
+      {
+        std::vector<float> dummy2, dummy3;
+        sortByTime(lightTimes, lightValues, dummy2, dummy3);
+      }
 
-        // Vygenerujeme <script> s data arrays:
-        html += "<script>";
-        // Soil times
-        html += "const soilLabels = [";
-        for(size_t i=0; i < soilTimes.size(); i++){
-          html += String(soilTimes[i]);
-          if(i < soilTimes.size() - 1) html += ",";
-        }
-        html += "];";
-        // Soil values
-        html += "const soilData = [";
-        for(size_t i=0; i < soilValues.size(); i++){
-          html += String(soilValues[i]);
-          if(i < soilValues.size() - 1) html += ",";
-        }
-        html += "];";
-        // Temp
-        html += "const tempData = [";
-        for(size_t i=0; i < tempValues.size(); i++){
-          html += String(tempValues[i]);
-          if(i < tempValues.size() - 1) html += ",";
-        }
-        html += "];";
-        // Hum
-        html += "const humData = [";
-        for(size_t i=0; i < humValues.size(); i++){
-          html += String(humValues[i]);
-          if(i < humValues.size() - 1) html += ",";
-        }
-        html += "];";
-        // Light times
-        html += "const lightLabels = [";
-        for(size_t i=0; i < lightTimes.size(); i++){
-          html += String(lightTimes[i]);
-          if(i < lightTimes.size() - 1) html += ",";
-        }
-        html += "];";
-        // Light values
-        html += "const lightData = [";
-        for(size_t i=0; i < lightValues.size(); i++){
-          html += String(lightValues[i]);
-          if(i < lightValues.size() - 1) html += ",";
-        }
-        html += "];";
+      // Vygenerujeme JavaScript s poli dat
+      html += "<script>";
+      // soilTimes
+      html += "const soilLabels = [";
+      for(size_t i=0; i < soilTimes.size(); i++){
+        html += String(soilTimes[i]);
+        if(i < soilTimes.size() - 1) html += ",";
+      }
+      html += "];";
+      // soilValues
+      html += "const soilData = [";
+      for(size_t i=0; i < soilValues.size(); i++){
+        html += String(soilValues[i]);
+        if(i < soilValues.size() - 1) html += ",";
+      }
+      html += "];";
+      // tempValues
+      html += "const tempData = [";
+      for(size_t i=0; i < tempValues.size(); i++){
+        html += String(tempValues[i]);
+        if(i < tempValues.size() - 1) html += ",";
+      }
+      html += "];";
+      // humValues
+      html += "const humData = [";
+      for(size_t i=0; i < humValues.size(); i++){
+        html += String(humValues[i]);
+        if(i < humValues.size() - 1) html += ",";
+      }
+      html += "];";
+      // lightTimes
+      html += "const lightLabels = [";
+      for(size_t i=0; i < lightTimes.size(); i++){
+        html += String(lightTimes[i]);
+        if(i < lightTimes.size() - 1) html += ",";
+      }
+      html += "];";
+      // lightValues
+      html += "const lightData = [";
+      for(size_t i=0; i < lightValues.size(); i++){
+        html += String(lightValues[i]);
+        if(i < lightValues.size() - 1) html += ",";
+      }
+      html += "];";
 
-        // Zavoláme naše funkce (viz CHART_JS)
-        html += R"(
+      // Zavoláme funkce pro vykreslení
+      html += R"(
         drawSoilChart(soilLabels, soilData);
         drawTempChart(soilLabels, tempData);
         drawHumChart(soilLabels, humData);
         drawLightChart(lightLabels, lightData);
-        )";
+      )";
+      html += "</script>";
 
-        html += "</script>";
+      // Dokončení stránky
+      html += makeHtmlFooter();
+      request->send(200, "text/html", html);
+    });
+
+    // Stránka "/history" - poslední záznamy s volitelným limitem
+    // ==================================================
+    server.on("/history", HTTP_GET, [](AsyncWebServerRequest *request){
+      // Zkusíme načíst GET parametr "limit"
+      int limit = 10; 
+      if (request->hasParam("limit")) {
+        limit = request->getParam("limit")->value().toInt();
+        if (limit <= 0) limit = 10; // ochrana proti nesmyslu
       }
 
-      // --- Tabulka s posledními 10 daty ---
-      html += "<hr><h3>Poslední data</h3>";
+      String html = makeHtmlHeader("Poslední data");
+
+      html += "<hr><h3>Poslední záznamy senzorů</h3>";
+      // Form pro nastavení počtu řádků
+      html += "<form method='GET' action='/history'>";
+      html += "  <label>Počet záznamů k zobrazení:</label>";
+      html += "  <input type='number' name='limit' value='" + String(limit) + "'>";
+      html += "  <input type='submit' class='btn' value='Zobrazit'>";
+      html += "</form>";
+
+      // Tabulka
       html += "<div class='table-container'><table>";
       html += "<tr><th>SensorID</th><th>Soil(%)</th><th>Temp(°C)</th><th>Hum(%)</th><th>Light</th><th>Time</th></tr>";
 
       int count = dataBuffer.size();
       int rowsPrinted = 0;
-      for(int i = count - 1; i >= 0 && rowsPrinted < 10; i--) {
+      for(int i = count - 1; i >= 0 && rowsPrinted < limit; i--) {
         const auto &d = dataBuffer[i];
         if(d.soilMoisture == 0 &&
            d.temperature  == 0 &&
@@ -468,14 +496,13 @@ static inline void startAsyncWebServer() {
       }
       html += "</table></div>";
 
-      Serial.print("Volne misto v RAM: ");
-      Serial.println(ESP.getFreeHeap());
-
+      // Dokončení
       html += makeHtmlFooter();
       request->send(200, "text/html", html);
     });
 
     // Stránka "/wifi"
+    // ==================================================
     server.on("/wifi", HTTP_GET, [](AsyncWebServerRequest *request){
       // Nejdříve zkontrolujeme stav asynchronního skenování
       checkAsyncScan();
@@ -541,6 +568,7 @@ static inline void startAsyncWebServer() {
     });
 
     // Stránka "/watering"
+    // ==================================================
     server.on("/watering", HTTP_GET, [](AsyncWebServerRequest *request){
       String html = makeHtmlHeader("Nastavení zalévání");
 
@@ -615,7 +643,7 @@ static inline void startAsyncWebServer() {
     server.on("/runoneshot", HTTP_POST, [](AsyncWebServerRequest *request){
       if(request->hasParam("oneTimeML", true)) {
         double oneTimeML = request->getParam("oneTimeML", true)->value().toFloat();
-        double secondsFloat = oneTimeML * 0.03; // 1 ml = 0.03 s
+        double secondsFloat = oneTimeML * 0.03; // 1 ml = 0.03 s (příklad)
         int secondsToPump  = (int)round(secondsFloat);
 
         Serial.printf("Jednorázové zalití: %.2f ml -> %d sekund.\n", oneTimeML, secondsToPump);

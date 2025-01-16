@@ -1,6 +1,5 @@
 #include <Arduino.h>
 
-// Načteme všechny .h moduly
 #include "FarmHubWiFi.h"
 #include "FarmHubDisplay.h"
 #include "FarmHubConfig.h"
@@ -8,47 +7,49 @@
 #include "FarmHubWebServer.h"
 #include "FarmHubWebSocket.h"
 
+/**
+ * setup() nastavuje a inicializuje
+ * všechny potřebné části projektu (SPIFFS, Wi-Fi, displej, webserver, atd.).
+ */
 void setup() {
   Serial.begin(115200);
   delay(200);
 
-  // SPIFFS init
+  // 1) Inicializace souborového systému (SPIFFS)
   initFileSystem(); // z FarmHubConfig.h
 
-  // Načteme uloženou konfiguraci
-  loadUserConfig(); // homeSsid, homePass, moistureThreshold...
+  // 2) Načteme uloženou konfiguraci (homeSsid, homePass, moistureThreshold, ...)
+  loadUserConfig();
 
-  // OLED displej
+  // 3) Inicializujeme OLED displej
   initDisplay();
   displayInfo("Starting...", "");
 
-  // Vytvoříme AP (Access Point) pro konfiguraci v případě potíží
+  // 4) Spustíme AP (Access Point) pro případné nastavení, když selže připojení
   setupWifiAP();
 
-  // Zkusit se připojit k domácí Wi-Fi
+  // 5) Zkusíme se připojit k domácí Wi-Fi
   bool wifiOK = connectToHomeWiFi(homeSsid, homePass);
   if (wifiOK) {
     displayInfo("WiFi OK", WiFi.localIP().toString());
-
-    // >>> ZDE zavoláme synchronizaci času přes NTP <<<
+    // Synchronizace času přes NTP (pokud je Wi-Fi OK)
     setupTimeFromNTP();
-    
   } else {
     displayInfo("WiFi fail", "AP only");
   }
 
-  // Spustíme asynchronní webserver
+  // 6) Spuštění asynchronního webového serveru a WebSocketu
   startAsyncWebServer();
   startWebSocket();
 }
 
 void loop() {
-  // Aktualizace displeje (pokud máte měnící se údaje, např. čas, stav…)
+  // 1) Aktualizace OLED displeje - pokud zobrazujete proměnlivá data
   updateDisplayLoop();
 
-  // Kontrola zalévání (automatika/manual)
+  // 2) Kontrola prahu vlhkosti a automatické/manualní zalévání
   checkAndIrrigate();
 
+  // Krátká prodleva, aby smyčka neběžela příliš rychle
   delay(50);
-
 }
