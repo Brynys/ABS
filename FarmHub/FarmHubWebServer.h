@@ -351,7 +351,7 @@ static inline void startAsyncWebServer() {
                            std::vector<float> &v2,
                            std::vector<float> &v3)
       {
-        const size_t CHART_MAX_POINTS = 30; 
+        const size_t CHART_MAX_POINTS = 6; 
         if(times.size() > CHART_MAX_POINTS) {
           size_t startIndex = times.size() - CHART_MAX_POINTS;
           times.erase(times.begin(), times.begin() + startIndex);
