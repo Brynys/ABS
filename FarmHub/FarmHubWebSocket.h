@@ -11,6 +11,7 @@
 
 // Jedna instance WebSocketu na endpointu /ws
 static AsyncWebSocket ws("/ws");
+extern AsyncWebServer server;
 
 // Odeslání příkazu RUN_PUMP všem klientům (JSON: { "cmd":"RUN_PUMP", "duration":X })
 void broadcastRunPump(int durationSec) {

@@ -4,28 +4,14 @@
 #include <Arduino.h>
 #include <ESPAsyncWebServer.h>
 #include <time.h>
-
-// Načteme WiFi (pro AP_SSID, AP_PASS, a status WiFi)
+#include <ESP8266HTTPClient.h>
 #include "FarmHubWiFi.h"
-
-// Načteme Config (pro homeSsid, homePass, saveUserConfig() atd.)
 #include "FarmHubConfig.h"
+#include "FarmHubESP32CAM.h"
+#include "FarmHubWebSocket.h"
 
-// Načteme Data (pro dataBuffer, SensorReading atd.)
-#include "FarmHubData.h"
-
-// Globální proměnné (pokud je máte jinde, odstraňte zde):
-extern bool autoWatering;
-extern float moistureThreshold;
-extern int waterAmountML;
-extern std::vector<SensorReading> dataBuffer;
-
-// Vytvoříme statický server na portu 80
-static AsyncWebServer server(80);
-
-// ------------------------------------------------------------
-// 1) Uložíme velké řetězce (HTML/CSS/JS) do PROGMEM
-// ------------------------------------------------------------
+// Uložené HTML řetězce, funkce makeHtmlHeader a makeHtmlFooter zůstávají stejné
+AsyncWebServer server(80);
 
 static const char PAGE_HEAD[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
@@ -75,25 +61,16 @@ static const char PAGE_HEAD[] PROGMEM = R"rawliteral(
   <h1>
 )rawliteral";
 
-/**
- * Po TITLE následuje uzavření <h1> a pak zbytek HTML těla.
- */
 static const char PAGE_HEAD_END[] PROGMEM = R"rawliteral(
 </h1>
 )rawliteral";
 
-/**
- * Základní HTML patička
- */
 static const char PAGE_FOOTER[] PROGMEM = R"rawliteral(
   </div>
 </body>
 </html>
 )rawliteral";
 
-/**
- * Volitelný JavaScript pro Chart.js. (Můžete dát i do externího .js)
- */
 static const char CHART_JS[] PROGMEM = R"rawliteral(
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
@@ -194,92 +171,66 @@ function drawLightChart(labels, dataLight) {
 </script>
 )rawliteral";
 
-// Vytvoření HTML hlavičky
+// Pomocná funkce pro sestavení HTML hlavičky
 String makeHtmlHeader(const String &title) {
     String html;
     html.reserve(2048);
-
-    // 1) Načteme z PROGMEM úvod HTML s <head> a CSS
     html = FPSTR(PAGE_HEAD);
-
-    // 2) Nahradíme %TITLE% v textu skutečným `title`
     html.replace("%TITLE%", title);
-
-    // 3) Pak doplníme text do <h1> (část je už v PAGE_HEAD)
     html += title;
-
-    // 4) Vložíme pokračování (uzavření <h1>)
     html += FPSTR(PAGE_HEAD_END);
-
     return html;
 }
 
-/**
- * Funkce, která vrátí základní HTML patičku (uloženou v PROGMEM).
- */
 String makeHtmlFooter() {
     return FPSTR(PAGE_FOOTER);
 }
 
-// ------------------------------------------------------------
-// 2) Samotné spuštění asynchronního webserveru
-// ------------------------------------------------------------
-static inline void startAsyncWebServer() {
+//-----------------------------------------------------------
+// Pomocná funkce pro načtení senzorových dat z ESP32-CAM
+//-----------------------------------------------------------
+String fetchSensorData() {
+  return getSensorData(); // Funkce z FarmHubESP32CAM.h
+}
 
-    // Hlavní stránka "/"
-    // ==================================================
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+//-----------------------------------------------------------
+// Endpoint "/" - Přehled
+//-----------------------------------------------------------
+static inline void setupOverviewPage() {
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
       String html = makeHtmlHeader("FarmHub - Přehled");
-
-      // Zobrazení stavu AP
-      html += "<p>AP SSID: <strong>" + String(AP_SSID) + "</strong>, "
-              "heslo: <strong>" + String(AP_PASS) + "</strong></p>";
+      html += "<p>AP SSID: <strong>" + String(AP_SSID) + "</strong>, heslo: <strong>" + String(AP_PASS) + "</strong></p>";
       html += "<p>AP IP: <strong>" + WiFi.softAPIP().toString() + "</strong></p>";
-
-      // Zobrazení stavu STA (domácí Wi-Fi)
       if(WiFi.status() == WL_CONNECTED) {
-        html += "<p><strong>Připojeno k domácí síti:</strong> "
-                + homeSsid + " (IP: " + WiFi.localIP().toString() + ")</p>";
+        html += "<p><strong>Připojeno k domácí síti:</strong> " + homeSsid + " (IP: " + WiFi.localIP().toString() + ")</p>";
       } else {
         html += "<p><strong>Nepřipojeno k domácí Wi-Fi.</strong></p>";
       }
-
-      // Najdeme poslední data senzorů (soilDHT a light)
-      SensorReading lastSoilDHT;
-      bool foundSoilDHT = false;
-      SensorReading lastLight;
-      bool foundLight   = false;
-
-      for (int i = dataBuffer.size() - 1; i >= 0; i--) {
-        const auto &d = dataBuffer[i];
-        if (!foundSoilDHT && d.sensorID == "soilDHTsensor") {
-          lastSoilDHT = d;
-          foundSoilDHT = true;
+      
+      // Načtení senzorových dat z ESP32-CAM
+      String sensorDataJSON = fetchSensorData();
+      float soilVal = 0.0, tempVal = 0.0, humVal = 0.0, lightVal = 0.0;
+      unsigned long latestTs = 0;
+      StaticJsonDocument<2048> doc;
+      DeserializationError err = deserializeJson(doc, sensorDataJSON);
+      if (!err) {
+        JsonArray readings = doc["readings"].as<JsonArray>();
+        if (readings.size() > 0) {
+          JsonObject lastReading = readings[readings.size()-1];
+          soilVal  = lastReading["soilMoisture"] | 0.0;
+          tempVal  = lastReading["temperature"]  | 0.0;
+          humVal   = lastReading["humidity"]     | 0.0;
+          lightVal = lastReading["lightLevel"]   | 0.0;
+          latestTs = lastReading["timestamp"]    | 0;
         }
-        if (!foundLight && d.sensorID == "lightsensor") {
-          lastLight = d;
-          foundLight = true;
-        }
-        if (foundSoilDHT && foundLight) break;
+      } else {
+        html += "<p>Chyba při načítání dat z ESP32-CAM.</p>";
       }
-
+      
       html += "<hr><h3>Aktuální hodnoty</h3>";
       html += "<div class='table-container'><table>";
       html += "<tr><th>Půdní vlhkost (%)</th><th>Teplota (°C)</th><th>Vlhkost (%)</th><th>Světlo</th><th>Naposledy přijato</th></tr>";
       html += "<tr>";
-
-      float soilVal = (foundSoilDHT ? lastSoilDHT.soilMoisture : 0.0);
-      float tempVal = (foundSoilDHT ? lastSoilDHT.temperature : 0.0);
-      float humVal  = (foundSoilDHT ? lastSoilDHT.humidity : 0.0);
-      float lightVal= (foundLight   ? lastLight.lightLevel : 0.0);
-
-      // Čas, který zobrazíme
-      unsigned long latestTs = 0;
-      if (foundSoilDHT) latestTs = lastSoilDHT.timestamp;
-      if (foundLight && lastLight.timestamp > latestTs) {
-        latestTs = lastLight.timestamp;
-      }
-
       html += "<td>" + String(soilVal)  + "</td>";
       html += "<td>" + String(tempVal)  + "</td>";
       html += "<td>" + String(humVal)   + "</td>";
@@ -290,152 +241,128 @@ static inline void startAsyncWebServer() {
         html += "<td>N/A</td>";
       }
       html += "</tr></table></div>";
-
-      // Zobrazíme volnou RAM (pro kontrolu)
+      
+      // Zobrazení aktuální fotografie z ESP32-CAM
+      html += "<hr><h3>Aktuální fotografie</h3>";
+      html += "<img src='" + getCurrentImageURL() + "' alt='Aktuální fotografie' width='320' />";
+      
       html += "<p>Volné místo v RAM: " + String(ESP.getFreeHeap()) + " B</p>";
-
-      // Dokončíme stránku
       html += makeHtmlFooter();
       request->send(200, "text/html", html);
-    });
+  });
+}
 
-    // Stránka "/charts" - pouze grafy
-    // ==================================================
-    server.on("/charts", HTTP_GET, [](AsyncWebServerRequest *request){
+//-----------------------------------------------------------
+// Endpoint "/charts" - Grafy
+//-----------------------------------------------------------
+static inline void setupChartsPage() {
+  server.on("/charts", HTTP_GET, [](AsyncWebServerRequest *request){
       String html = makeHtmlHeader("FarmHub - Grafy");
-
       if(WiFi.status() != WL_CONNECTED){
-        // Pokud není Wi-Fi, jen upozorníme, že grafy budou prázdné
-        html += "<p><strong>Není připojení k Wi-Fi, grafy se nemusí vykreslit.</strong></p>";
+        html += "<p><strong>Nepřipojeno k Wi-Fi, grafy se nemusí vykreslit.</strong></p>";
       }
-
-      // Vložíme 4 plátna pro 4 grafy
+      
       html += "<hr><h3>Grafy senzorů</h3>";
       html += "<div class='chart-container'><canvas id='chartSoil'></canvas></div>";
       html += "<div class='chart-container'><canvas id='chartTemp'></canvas></div>";
       html += "<div class='chart-container'><canvas id='chartHum'></canvas></div>";
       html += "<div class='chart-container'><canvas id='chartLight'></canvas></div>";
-
-      // Vložíme kód pro Chart.js
       html += FPSTR(CHART_JS);
-
-      // Připravíme data pro JavaScript
-      std::vector<float> soilTimes;
-      std::vector<float> soilValues;
-      std::vector<float> tempValues;
-      std::vector<float> humValues;
-      std::vector<float> lightTimes;
-      std::vector<float> lightValues;
-
-      // Projdeme celý dataBuffer a rozdělíme data podle sensorID
-      for (auto &d : dataBuffer) {
-        if(d.soilMoisture == 0 && d.temperature == 0 &&
-           d.humidity == 0 && d.lightLevel == 0) {
-          continue;
-        }
-        if(d.sensorID == "soilDHTsensor") {
-          soilTimes.push_back((float)d.timestamp);
-          soilValues.push_back(d.soilMoisture);
-          tempValues.push_back(d.temperature);
-          humValues.push_back(d.humidity);
-        }
-        else if(d.sensorID == "lightsensor") {
-          lightTimes.push_back((float)d.timestamp);
-          lightValues.push_back(d.lightLevel);
+      
+      // Načtení senzorových dat z ESP32-CAM
+      String sensorDataJSON = fetchSensorData();
+      StaticJsonDocument<4096> doc;
+      DeserializationError err = deserializeJson(doc, sensorDataJSON);
+      std::vector<float> soilTimes, soilValues, tempValues, humValues;
+      std::vector<float> lightTimes, lightValues;
+      
+      if (!err) {
+        JsonArray readings = doc["readings"].as<JsonArray>();
+        for (JsonObject r : readings) {
+          unsigned long ts = r["timestamp"] | 0;
+          if (r["sensorID"] == "soilDHTsensor") {
+            soilTimes.push_back((float)ts);
+            soilValues.push_back(r["soilMoisture"] | 0.0);
+            tempValues.push_back(r["temperature"] | 0.0);
+            humValues.push_back(r["humidity"] | 0.0);
+          } else if (r["sensorID"] == "lightsensor") {
+            lightTimes.push_back((float)ts);
+            lightValues.push_back(r["lightLevel"] | 0.0);
+          }
         }
       }
-
-      // Omezení počtu bodů
-      auto keepLastN = [&](std::vector<float> &times,
-                           std::vector<float> &v1,
-                           std::vector<float> &v2,
-                           std::vector<float> &v3)
-      {
-        const size_t CHART_MAX_POINTS = 6; 
+      
+      // Omezení počtu bodů a řazení (podobně jako dříve)
+      const size_t CHART_MAX_POINTS = 6;
+      auto trimData = [&](std::vector<float> &times, std::vector<float> &values) {
         if(times.size() > CHART_MAX_POINTS) {
           size_t startIndex = times.size() - CHART_MAX_POINTS;
           times.erase(times.begin(), times.begin() + startIndex);
-          v1.erase(v1.begin(), v1.begin() + startIndex);
-          if(!v2.empty()) v2.erase(v2.begin(), v2.begin() + startIndex);
-          if(!v3.empty()) v3.erase(v3.begin(), v3.begin() + startIndex);
+          values.erase(values.begin(), values.begin() + startIndex);
         }
       };
-      keepLastN(soilTimes, soilValues, tempValues, humValues);
-      {
-        std::vector<float> dummy2, dummy3;
-        keepLastN(lightTimes, lightValues, dummy2, dummy3);
-      }
-
-      // Seřadíme podle času (vzestupně)
-      auto sortByTime = [](std::vector<float> &times,
-                           std::vector<float> &v1,
-                           std::vector<float> &v2,
-                           std::vector<float> &v3){
-        for(size_t i=0; i < times.size(); i++){
-          for(size_t j=0; j < times.size()-1; j++){
+      trimData(soilTimes, soilValues);
+      trimData(lightTimes, lightValues);
+      
+      auto sortData = [&](std::vector<float> &times, std::vector<float> &v1, std::vector<float> &v2, std::vector<float> &v3) {
+        for (size_t i = 0; i < times.size(); i++) {
+          for (size_t j = 0; j < times.size()-1; j++) {
             if(times[j] > times[j+1]) {
               std::swap(times[j], times[j+1]);
               std::swap(v1[j], v1[j+1]);
-              if(!v2.empty()) std::swap(v2[j], v2[j+1]);
-              if(!v3.empty()) std::swap(v3[j], v3[j+1]);
+              std::swap(v2[j], v2[j+1]);
+              std::swap(v3[j], v3[j+1]);
             }
           }
         }
       };
       if(!soilTimes.empty()) {
-        sortByTime(soilTimes, soilValues, tempValues, humValues);
+        sortData(soilTimes, soilValues, tempValues, humValues);
       }
-      {
-        std::vector<float> dummy2, dummy3;
-        sortByTime(lightTimes, lightValues, dummy2, dummy3);
-      }
-
-      // Vygenerujeme JavaScript s poli dat
+      
       html += "<script>";
-      // soilTimes
       html += "const soilLabels = [";
-      for(size_t i=0; i < soilTimes.size(); i++){
+      for(size_t i = 0; i < soilTimes.size(); i++){
         html += String(soilTimes[i]);
         if(i < soilTimes.size() - 1) html += ",";
       }
       html += "];";
-      // soilValues
+      
       html += "const soilData = [";
-      for(size_t i=0; i < soilValues.size(); i++){
+      for(size_t i = 0; i < soilValues.size(); i++){
         html += String(soilValues[i]);
         if(i < soilValues.size() - 1) html += ",";
       }
       html += "];";
-      // tempValues
+      
       html += "const tempData = [";
-      for(size_t i=0; i < tempValues.size(); i++){
+      for(size_t i = 0; i < tempValues.size(); i++){
         html += String(tempValues[i]);
         if(i < tempValues.size() - 1) html += ",";
       }
       html += "];";
-      // humValues
+      
       html += "const humData = [";
-      for(size_t i=0; i < humValues.size(); i++){
+      for(size_t i = 0; i < humValues.size(); i++){
         html += String(humValues[i]);
         if(i < humValues.size() - 1) html += ",";
       }
       html += "];";
-      // lightTimes
+      
       html += "const lightLabels = [";
-      for(size_t i=0; i < lightTimes.size(); i++){
+      for(size_t i = 0; i < lightTimes.size(); i++){
         html += String(lightTimes[i]);
         if(i < lightTimes.size() - 1) html += ",";
       }
       html += "];";
-      // lightValues
+      
       html += "const lightData = [";
-      for(size_t i=0; i < lightValues.size(); i++){
+      for(size_t i = 0; i < lightValues.size(); i++){
         html += String(lightValues[i]);
         if(i < lightValues.size() - 1) html += ",";
       }
       html += "];";
-
-      // Zavoláme funkce pro vykreslení
+      
       html += R"(
         drawSoilChart(soilLabels, soilData);
         drawTempChart(soilLabels, tempData);
@@ -443,73 +370,69 @@ static inline void startAsyncWebServer() {
         drawLightChart(lightLabels, lightData);
       )";
       html += "</script>";
-
-      // Dokončení stránky
+      
       html += makeHtmlFooter();
       request->send(200, "text/html", html);
-    });
+  });
+}
 
-    // Stránka "/history" - poslední záznamy s volitelným limitem
-    // ==================================================
-    server.on("/history", HTTP_GET, [](AsyncWebServerRequest *request){
-      // Zkusíme načíst GET parametr "limit"
-      int limit = 10; 
+//-----------------------------------------------------------
+// Endpoint "/history" - Historie záznamů
+//-----------------------------------------------------------
+static inline void setupHistoryPage() {
+  server.on("/history", HTTP_GET, [](AsyncWebServerRequest *request){
+      int limit = 10;
       if (request->hasParam("limit")) {
         limit = request->getParam("limit")->value().toInt();
-        if (limit <= 0) limit = 10; // ochrana proti nesmyslu
+        if (limit <= 0) limit = 10;
       }
-
-      String html = makeHtmlHeader("Poslední data");
-
+      String html = makeHtmlHeader("Historie dat");
       html += "<hr><h3>Poslední záznamy senzorů</h3>";
-      // Form pro nastavení počtu řádků
       html += "<form method='GET' action='/history'>";
       html += "  <label>Počet záznamů k zobrazení:</label>";
       html += "  <input type='number' name='limit' value='" + String(limit) + "'>";
       html += "  <input type='submit' class='btn' value='Zobrazit'>";
       html += "</form>";
-
-      // Tabulka
+      
+      // Načtení senzorových dat z ESP32-CAM
+      String sensorDataJSON = fetchSensorData();
+      StaticJsonDocument<4096> doc;
+      DeserializationError err = deserializeJson(doc, sensorDataJSON);
       html += "<div class='table-container'><table>";
-      html += "<tr><th>SensorID</th><th>Soil(%)</th><th>Temp(°C)</th><th>Hum(%)</th><th>Light</th><th>Time</th></tr>";
-
-      int count = dataBuffer.size();
-      int rowsPrinted = 0;
-      for(int i = count - 1; i >= 0 && rowsPrinted < limit; i--) {
-        const auto &d = dataBuffer[i];
-        if(d.soilMoisture == 0 &&
-           d.temperature  == 0 &&
-           d.humidity     == 0 &&
-           d.lightLevel   == 0)
-        {
-          continue;
+      html += "<tr><th>SensorID</th><th>Půdní vlhkost (%)</th><th>Teplota (°C)</th><th>Vlhkost (%)</th><th>Světlo</th><th>Time</th></tr>";
+      
+      if (!err) {
+        JsonArray readings = doc["readings"].as<JsonArray>();
+        int total = readings.size();
+        int start = (total > limit) ? total - limit : 0;
+        for (int i = total - 1; i >= start; i--) {
+          JsonObject r = readings[i];
+          html += "<tr>";
+          html += "<td>" + String((const char*)r["sensorID"]) + "</td>";
+          html += "<td>" + String(r["soilMoisture"] | 0.0) + "</td>";
+          html += "<td>" + String(r["temperature"] | 0.0) + "</td>";
+          html += "<td>" + String(r["humidity"] | 0.0) + "</td>";
+          html += "<td>" + String(r["lightLevel"] | 0.0) + "</td>";
+          html += "<td>" + formatEpochTime(r["timestamp"] | 0) + "</td>";
+          html += "</tr>";
         }
-        html += "<tr>";
-        html += "<td>" + d.sensorID             + "</td>";
-        html += "<td>" + String(d.soilMoisture) + "</td>";
-        html += "<td>" + String(d.temperature)  + "</td>";
-        html += "<td>" + String(d.humidity)     + "</td>";
-        html += "<td>" + String(d.lightLevel)   + "</td>";
-        html += "<td>" + formatEpochTime(d.timestamp) + "</td>";
-        html += "</tr>";
-        rowsPrinted++;
+      } else {
+        html += "<tr><td colspan='6'>Chyba při načítání dat.</td></tr>";
       }
       html += "</table></div>";
-
-      // Dokončení
       html += makeHtmlFooter();
       request->send(200, "text/html", html);
-    });
+  });
+}
 
-    // Stránka "/wifi"
-    // ==================================================
-    server.on("/wifi", HTTP_GET, [](AsyncWebServerRequest *request){
-      // Nejdříve zkontrolujeme stav asynchronního skenování
+//-----------------------------------------------------------
+// Endpointy "/wifi" a "/watering" zůstávají nezměněny
+//-----------------------------------------------------------
+static inline void setupWifiPage() {
+  server.on("/wifi", HTTP_GET, [](AsyncWebServerRequest *request){
       checkAsyncScan();
-
       String html = makeHtmlHeader("Nastavení Wi-Fi");
       html += "<p><a class='btn' href='/startscan'>Načíst seznam sítí (async)</a></p>";
-
       if (g_isScanning) {
         html += "<p><strong>Probíhá skenování sítí...</strong></p>";
         html += "<p>Stránka se obnoví za <span id='timer'>10</span> s.</p>";
@@ -534,9 +457,7 @@ static inline void startAsyncWebServer() {
           html += "<select name='ssid'>";
           for (int i = 0; i < g_foundNetworks; i++) {
             String ssidFound = g_scannedSSIDs[i];
-            html += "<option value='" + ssidFound + "'>";
-            html += ssidFound;
-            html += "</option>";
+            html += "<option value='" + ssidFound + "'>" + ssidFound + "</option>";
           }
           html += "</select></div>";
           html += "<div class='form-group'><label>Heslo:</label>";
@@ -547,8 +468,6 @@ static inline void startAsyncWebServer() {
       } else {
         html += "<p>Nebylo spuštěno skenování, klikněte výše na tlačítko \"Načíst seznam sítí\".</p>";
       }
-
-      // Formulář pro ruční zadání
       html += "<hr><p>Nebo zadat ručně (skrytou síť):</p>";
       html += "<form method='POST' action='/setwifi'>";
       html += "<div class='form-group'><label>SSID:</label>";
@@ -557,40 +476,34 @@ static inline void startAsyncWebServer() {
       html += "<input type='password' name='pass'></div>";
       html += "<input type='submit' class='btn' value='Uložit Wi-Fi'>";
       html += "</form>";
-
       html += makeHtmlFooter();
       request->send(200, "text/html", html);
-    });
-
-    server.on("/startscan", HTTP_GET, [](AsyncWebServerRequest *request){
+  });
+  
+  server.on("/startscan", HTTP_GET, [](AsyncWebServerRequest *request){
       startAsyncScan();
       request->redirect("/wifi");
-    });
+  });
+}
 
-    // Stránka "/watering"
-    // ==================================================
-    server.on("/watering", HTTP_GET, [](AsyncWebServerRequest *request){
+static inline void setupWateringPage() {
+  server.on("/watering", HTTP_GET, [](AsyncWebServerRequest *request){
       String html = makeHtmlHeader("Nastavení zalévání");
-
       html += "<h3>Základní nastavení</h3>";
       html += "<form method='POST' action='/setwatering'>";
-      // Režim zalévání
       html += "<div class='form-group'><label>Režim zalévání:</label>";
       html += "<select name='autoWatering'>";
       html += "<option value='false' " + String(!autoWatering ? "selected" : "") + ">Manuální</option>";
-      html += "<option value='true' "  + String( autoWatering ? "selected" : "") + ">Automatický</option>";
+      html += "<option value='true' "  + String(autoWatering ? "selected" : "") + ">Automatický</option>";
       html += "</select></div>";
-      // Prahová vlhkost
       html += "<div class='form-group'><label>Prahová vlhkost půdy (%):</label>";
       html += "<input type='number' step='1' name='moistureThreshold' value='" + String(moistureThreshold) + "'>";
       html += "</div>";
-      // Množství vody
       html += "<div class='form-group'><label>Množství vody na jedno zalití (ml):</label>";
       html += "<input type='number' step='1' name='waterAmountML' value='" + String(waterAmountML) + "'>";
       html += "</div>";
       html += "<input type='submit' class='btn' value='Uložit nastavení'>";
       html += "</form>";
-
       if(!autoWatering) {
         html += "<hr><h3>Jednorázové zalití (manuální)</h3>";
         html += "<form method='POST' action='/runoneshot'>";
@@ -600,29 +513,11 @@ static inline void startAsyncWebServer() {
         html += "<input type='submit' class='btn' value='Zalít'>";
         html += "</form>";
       }
-
       html += makeHtmlFooter();
       request->send(200, "text/html", html);
-    });
-
-    // ----- POST Endpointy -----
-    server.on("/setwifi", HTTP_POST, [](AsyncWebServerRequest *request){
-      if(request->hasParam("ssid", true) && request->hasParam("pass", true)) {
-        homeSsid = request->getParam("ssid", true)->value();
-        homePass = request->getParam("pass", true)->value();
-
-        saveUserConfig();
-        request->redirect("/wifi");
-
-        WiFi.disconnect();
-        bool ok = connectToHomeWiFi(homeSsid, homePass);
-        Serial.printf("connectToHomeWiFi => %s\n", ok ? "OK" : "FAIL");
-      } else {
-        request->redirect("/wifi");
-      }
-    });
-
-    server.on("/setwatering", HTTP_POST, [](AsyncWebServerRequest *request){
+  });
+  
+  server.on("/setwatering", HTTP_POST, [](AsyncWebServerRequest *request){
       if(request->hasParam("autoWatering", true) &&
          request->hasParam("moistureThreshold", true) &&
          request->hasParam("waterAmountML", true))
@@ -630,7 +525,6 @@ static inline void startAsyncWebServer() {
         autoWatering      = (request->getParam("autoWatering", true)->value() == "true");
         moistureThreshold = request->getParam("moistureThreshold", true)->value().toFloat();
         waterAmountML     = request->getParam("waterAmountML", true)->value().toInt();
-
         saveUserConfig();
         Serial.printf("Uloženo: autoWatering=%s, threshold=%.1f, waterML=%d\n",
                       autoWatering ? "true" : "false",
@@ -638,28 +532,36 @@ static inline void startAsyncWebServer() {
                       waterAmountML);
       }
       request->redirect("/watering");
-    });
-
-    server.on("/runoneshot", HTTP_POST, [](AsyncWebServerRequest *request){
+  });
+  
+  server.on("/runoneshot", HTTP_POST, [](AsyncWebServerRequest *request){
       if(request->hasParam("oneTimeML", true)) {
         double oneTimeML = request->getParam("oneTimeML", true)->value().toFloat();
-        double secondsFloat = oneTimeML * 0.03; // 1 ml = 0.03 s (příklad)
+        double secondsFloat = oneTimeML * 0.03;
         int secondsToPump  = (int)round(secondsFloat);
-
         Serial.printf("Jednorázové zalití: %.2f ml -> %d sekund.\n", oneTimeML, secondsToPump);
         broadcastRunPump(secondsToPump);
       }
       request->redirect("/watering");
-    });
+  });
+}
 
-    // Dummy favicon
-    server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request) {
+//-----------------------------------------------------------
+// Spuštění webového serveru
+//-----------------------------------------------------------
+static inline void startAsyncWebServer() {
+  setupOverviewPage();
+  setupChartsPage();
+  setupHistoryPage();
+  setupWifiPage();
+  setupWateringPage();
+  
+  server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request) {
       request->send(200, "image/x-icon", "");
-    });
-
-    // Spustíme server
-    server.begin();
-    Serial.println("AsyncWebServer started on port 80");
+  });
+  
+  server.begin();
+  Serial.println("AsyncWebServer spuštěn na portu 80");
 }
 
 #endif // FARM_HUB_WEBSERVER_H

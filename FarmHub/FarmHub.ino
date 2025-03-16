@@ -5,6 +5,10 @@
 #include "FarmHubData.h"
 #include "FarmHubWebServer.h"
 #include "FarmHubWebSocket.h"
+#include "FarmHubESP32CAM.h"
+
+unsigned long lastUpdateTime = 0;
+const unsigned long updateInterval = 30000;
 
 void setup() {
   Serial.begin(115200);
@@ -29,6 +33,9 @@ void setup() {
   // Spustíme webserver, websocket
   startAsyncWebServer();
   startWebSocket();
+
+  registerImageUploadEndpoint(server);
+  Serial.println("konec Setup");
 }
 
 void updateDisplayWithSensorData() {

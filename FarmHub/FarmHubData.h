@@ -21,8 +21,11 @@ struct SensorReading {
 // Buffer naměřených dat v RAM
 static std::vector<SensorReading> dataBuffer;
 
+void forwardDataToESP32CAM(const SensorReading &sr);
+
 // Uložení dat do RAM + CSV
 static inline void storeSensorData(const SensorReading &sr) {
+  // Uložení do bufferu a CSV
   dataBuffer.push_back(sr);
   if (dataBuffer.size() > 300) {
     dataBuffer.erase(dataBuffer.begin(), dataBuffer.begin() + 100);
@@ -38,6 +41,9 @@ static inline void storeSensorData(const SensorReading &sr) {
                 sr.lightLevel);
     file.close();
   }
+
+  // Pokud chcete data navíc předat do ESP32-CAM, odkomentujte následující řádek:
+  // forwardDataToESP32CAM(sr);
 }
 
 // Vrací JSON se záznamy z CSV v daném časovém intervalu
