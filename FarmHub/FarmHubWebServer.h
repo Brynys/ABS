@@ -4,17 +4,12 @@
 #include <Arduino.h>
 #include <ESPAsyncWebServer.h>
 #include <time.h>
-
-// Načteme WiFi (pro AP_SSID, AP_PASS, a status WiFi)
 #include "FarmHubWiFi.h"
-
-// Načteme Config (pro homeSsid, homePass, saveUserConfig() atd.)
 #include "FarmHubConfig.h"
-
-// Načteme Data (pro dataBuffer, SensorReading atd.)
 #include "FarmHubData.h"
 
-// Globální proměnné (pokud je máte jinde, odstraňte zde):
+
+
 extern bool autoWatering;
 extern float moistureThreshold;
 extern int waterAmountML;
@@ -70,6 +65,7 @@ static const char PAGE_HEAD[] PROGMEM = R"rawliteral(
     <a href="/history">Log</a>
     <a href="/wifi">Nastavení Wi-Fi</a>
     <a href="/watering">Zalévání</a>
+    <a href="/lighting">Svícení</a>
   </nav>
   <div class="container">
   <h1>
@@ -567,6 +563,107 @@ static inline void startAsyncWebServer() {
       request->redirect("/wifi");
     });
 
+    // Pro manuální zapnutí/vypnutí
+    server.on("/setlightmanual", HTTP_POST, [](AsyncWebServerRequest *request){
+      if (request->hasParam("action", true)) {
+        String act = request->getParam("action", true)->value();
+        if (act == "on") {
+          manualLightOn = true;
+          Serial.println("Manuálně zapínám světlo...");
+        } else {
+          manualLightOn = false;
+          Serial.println("Manuálně vypínám světlo...");
+        }
+        saveUserConfig();
+        // zde můžeme přes WebSocket oznámit modulům nové nastavení
+        broadcastLightSettings();
+      }
+      request->redirect("/lighting");
+    });
+
+    // Pro automatický režim
+    server.on("/setlightauto", HTTP_POST, [](AsyncWebServerRequest *request){
+      if (request->hasParam("autoLight", true)) {
+        autoLight = (request->getParam("autoLight", true)->value() == "true");
+      }
+      if (request->hasParam("startH", true)) {
+        lightStartHour = request->getParam("startH", true)->value().toInt();
+      }
+      if (request->hasParam("startM", true)) {
+        lightStartMinute = request->getParam("startM", true)->value().toInt();
+      }
+      if (request->hasParam("endH", true)) {
+        lightEndHour = request->getParam("endH", true)->value().toInt();
+      }
+      if (request->hasParam("endM", true)) {
+        lightEndMinute = request->getParam("endM", true)->value().toInt();
+      }
+      if (request->hasParam("onlyDark", true)) {
+        lightOnlyIfDark = true;
+      } else {
+        lightOnlyIfDark = false;
+      }
+
+      saveUserConfig();
+      Serial.printf("Nastaveno: autoLight=%s, %02d:%02d - %02d:%02d, onlyDark=%s\n",
+        autoLight ? "true":"false",
+        lightStartHour, lightStartMinute,
+        lightEndHour, lightEndMinute,
+        lightOnlyIfDark ? "true":"false");
+        
+      // po změně nastavní také odešleme modulům
+      broadcastLightSettings();
+
+      request->redirect("/lighting");
+    });
+
+    server.on("/lighting", HTTP_GET, [](AsyncWebServerRequest *request){
+      String html = makeHtmlHeader("Ovládání světla");
+
+      // Formulář pro manuální zapnutí/vypnutí
+      html += "<h3>Manuální ovládání</h3>";
+      html += "<form method='POST' action='/setlightmanual'>";
+      html += "  <label>Světlo je teď: <strong>" + String(manualLightOn ? "ZAPNUTÉ" : "VYPNUTÉ") + "</strong></label><br>";
+      // Vložíme dvě tlačítka
+      html += "  <button class='btn' name='action' value='on'>Zapnout</button> ";
+      html += "  <button class='btn' name='action' value='off'>Vypnout</button>";
+      html += "</form>";
+
+      // Formulář pro automatický režim
+      html += "<hr><h3>Automatické svícení</h3>";
+      html += "<form method='POST' action='/setlightauto'>";
+      // Zapnout/vypnout autoLight
+      html += "<div class='form-group'><label>Režim:</label>";
+      html += "<select name='autoLight'>";
+      html += "<option value='false' " + String(!autoLight ? "selected":"") + ">Vypnuto</option>";
+      html += "<option value='true' "  + String( autoLight ? "selected":"") + ">Zapnuto</option>";
+      html += "</select></div>";
+
+      // Hodina/minuta start
+      html += "<div class='form-group'><label>Začátek (hh:mm):</label>";
+      html += "<input type='number' name='startH' value='" + String(lightStartHour) + "' min='0' max='23'>";
+      html += "<input type='number' name='startM' value='" + String(lightStartMinute) + "' min='0' max='59'>";
+      html += "</div>";
+
+      // Hodina/minuta konec
+      html += "<div class='form-group'><label>Konec (hh:mm):</label>";
+      html += "<input type='number' name='endH' value='" + String(lightEndHour) + "' min='0' max='23'>";
+      html += "<input type='number' name='endM' value='" + String(lightEndMinute) + "' min='0' max='59'>";
+      html += "</div>";
+
+      // Podmínka "jen když je tma" (light < 50)
+      html += "<div class='form-group'>";
+      html += "<label><input type='checkbox' name='onlyDark' value='1' " + String(lightOnlyIfDark ? "checked":"") + "> Svítit jen když je pod 50 lux</label>";
+      html += "</div>";
+
+      html += "<input type='submit' class='btn' value='Uložit nastavení'>";
+      html += "</form>";
+
+      html += makeHtmlFooter();
+      request->send(200, "text/html", html);
+    });
+
+
     // Stránka "/watering"
     // ==================================================
     server.on("/watering", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -661,5 +758,7 @@ static inline void startAsyncWebServer() {
     server.begin();
     Serial.println("AsyncWebServer started on port 80");
 }
+
+
 
 #endif // FARM_HUB_WEBSERVER_H

@@ -12,6 +12,13 @@ static String homePass          = "";
 static float  moistureThreshold = 40.0; 
 static int    waterAmountML     = 100;
 static bool   autoWatering      = false;
+static bool  autoLight        = false; // zapíná/vypíná automatické svícení
+static int   lightStartHour   = 8;     // hodina začátku svícení (0-23)
+static int   lightStartMinute = 0;     // minuta začátku
+static int   lightEndHour     = 20;    // hodina konce svícení
+static int   lightEndMinute   = 0;     // minuta konce
+static bool  lightOnlyIfDark  = false; // svítit jen když < 50 lux
+static bool  manualLightOn    = false; // manuální zapnutí/vypnutí
 
 // Nastavení NTP pro ČR
 static const long  gmtOffset_sec      = 3600;    
@@ -35,6 +42,13 @@ static inline void saveUserConfig() {
   doc["moistureThreshold"] = moistureThreshold;
   doc["waterAmountML"]     = waterAmountML;
   doc["autoWatering"]      = autoWatering;
+  doc["autoLight"]        = autoLight;
+  doc["lightStartHour"]   = lightStartHour;
+  doc["lightStartMinute"] = lightStartMinute;
+  doc["lightEndHour"]     = lightEndHour;
+  doc["lightEndMinute"]   = lightEndMinute;
+  doc["lightOnlyIfDark"]  = lightOnlyIfDark;
+  doc["manualLightOn"]    = manualLightOn;
 
   File file = SPIFFS.open("/config.json", "w");
   if (!file) {
@@ -71,6 +85,14 @@ static inline void loadUserConfig() {
   moistureThreshold = doc["moistureThreshold"] | 40.0;
   waterAmountML     = doc["waterAmountML"]     | 100;
   autoWatering      = doc["autoWatering"]      | false;
+  autoLight         = doc["autoLight"]        | false;
+  lightStartHour    = doc["lightStartHour"]   | 8;
+  lightStartMinute  = doc["lightStartMinute"] | 0;
+  lightEndHour      = doc["lightEndHour"]     | 20;
+  lightEndMinute    = doc["lightEndMinute"]   | 0;
+  lightOnlyIfDark   = doc["lightOnlyIfDark"]  | false;
+  manualLightOn     = doc["manualLightOn"]    | false;
+
 
   Serial.println("Config loaded.");
 }

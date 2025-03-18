@@ -88,6 +88,7 @@ static inline String getDataForPeriod(unsigned long fromMs, unsigned long toMs) 
 
 // Funkce z WebSocketu pro spuštění čerpadla
 extern void broadcastRunPump(int durationSec);
+extern void broadcastLightSettings();
 
 // Kontrola vlhkosti a případné spuštění čerpadla
 static inline void checkAndIrrigate() {

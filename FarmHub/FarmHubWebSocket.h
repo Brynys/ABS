@@ -6,7 +6,7 @@
 #include <ArduinoJson.h>
 #include <time.h>
 #include "FarmHubConfig.h"
-#include "FarmHubWebServer.h"
+#include "FarmHubWebSocket.h"
 #include "FarmHubData.h"
 
 // Jedna instance WebSocketu na endpointu /ws
@@ -17,6 +17,28 @@ void broadcastRunPump(int durationSec) {
   String msg = "{\"cmd\":\"RUN_PUMP\",\"duration\":";
   msg += durationSec;
   msg += "}";
+  ws.textAll(msg);
+}
+
+void broadcastLightSettings() {
+  // JSON s klíči definujícími stav
+  // (manuální on/off a automatický režim a parametry)
+  StaticJsonDocument<256> doc;
+  doc["cmd"] = "LIGHT_SETTINGS";
+  
+  doc["manualOn"]       = manualLightOn;
+  doc["autoLight"]      = autoLight;
+  doc["startHour"]      = lightStartHour;
+  doc["startMinute"]    = lightStartMinute;
+  doc["endHour"]        = lightEndHour;
+  doc["endMinute"]      = lightEndMinute;
+  doc["onlyIfDark"]     = lightOnlyIfDark;
+
+  // Převedeme do stringu
+  String msg;
+  serializeJson(doc, msg);
+
+  // Odeslání všem připojeným WebSocket klientům
   ws.textAll(msg);
 }
 
