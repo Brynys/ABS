@@ -652,9 +652,9 @@ static inline void startAsyncWebServer() {
       html += "</div>";
 
       // Podmínka "jen když je tma" (light < 50)
-      html += "<div class='form-group'>";
-      html += "<label><input type='checkbox' name='onlyDark' value='1' " + String(lightOnlyIfDark ? "checked":"") + "> Svítit jen když je pod 50 lux</label>";
-      html += "</div>";
+      //html += "<div class='form-group'>";
+      //html += "<label><input type='checkbox' name='onlyDark' value='1' " + String(lightOnlyIfDark ? "checked":"") + "> Svítit jen když je pod 50 lux</label>";
+      //html += "</div>";
 
       html += "<input type='submit' class='btn' value='Uložit nastavení'>";
       html += "</form>";

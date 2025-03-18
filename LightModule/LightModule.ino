@@ -25,7 +25,7 @@ bool lightOnlyIfDark  = false;
 bool manualLightOn    = false;
 
 // --- NTP: nastavení ---
-static const char* ntpServer = "pool.ntp.org";
+static const char* ntpServer = "195.113.144.201";
 static const long  gmtOffset_sec = 3600;     // Pro ČR: GMT+1 => 3600
 static const int   daylightOffset_sec = 0;   // Letní čas ručně, anebo 3600 pokud je letní;
 
@@ -88,6 +88,15 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 
     case WStype_DISCONNECTED:
       Serial.println("[WS] Odpojeno!");
+      {  WiFi.mode(WIFI_STA);
+        WiFi.begin(ssid, pass);
+        Serial.print("Connecting to WiFi");
+        unsigned long startAttempt = millis();
+        while (WiFi.status() != WL_CONNECTED && (millis() - startAttempt < 20000)) {
+          delay(500);
+          Serial.print(".");
+        }
+      }
       break;
 
     case WStype_TEXT:
