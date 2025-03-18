@@ -28,6 +28,8 @@ bool manualLightOn    = false;
 static const char* ntpServer = "195.113.144.201";
 static const long  gmtOffset_sec = 3600;     // Pro ČR: GMT+1 => 3600
 static const int   daylightOffset_sec = 0;   // Letní čas ručně, anebo 3600 pokud je letní;
+unsigned long g_hubEpochTime = 0;
+unsigned long g_hubEpochTimeMillis = 0; 
 
 // Připojení k WiFi
 const char* ssid = "FarmHub-AP";  // nebo vaše domácí síť
@@ -47,18 +49,32 @@ int toMinutesFromMidnight(int h, int m) {
   return h * 60 + m;
 }
 
+void setEpochTime(unsigned long hubTime) {
+  g_hubEpochTime = hubTime;
+  g_hubEpochTimeMillis = millis();
+}
+
+unsigned long getCurrentEpochTime() {
+  // Kolik vteřin uběhlo od momentu, kdy jsme si čas uložili?
+  unsigned long secsSinceSync = (millis() - g_hubEpochTimeMillis) / 1000;
+  // Vrátíme původní hubTime + uplynulý čas
+  return g_hubEpochTime + secsSinceSync;
+}
+
 // Zjistí, zda je aktuální lokální čas (podle RTC) uvnitř intervalu start..end
 bool isInLightingWindow() {
   // Získání lokálního času z RTC (synced z NTP)
-  time_t now = time(nullptr);
-  struct tm* timeInfo = localtime(&now);
-  if (!timeInfo) {
+  unsigned long now = getCurrentEpochTime();
+  time_t rawTime = (time_t)now;
+  struct tm* timeinfo = localtime(&rawTime);
+  
+  if (!timeinfo) {
     // Pokud se NTP nepovedlo, timeInfo může být nullptr,
     // fallback: považujme to, jako by byl 0:0
     return false;
   }
-  int currentHour   = timeInfo->tm_hour;
-  int currentMinute = timeInfo->tm_min;
+  int currentHour   = timeinfo->tm_hour;
+  int currentMinute = timeinfo->tm_min;
   
   int nowMin   = toMinutesFromMidnight(currentHour, currentMinute);
   int startMin = toMinutesFromMidnight(lightStartHour, lightStartMinute);
@@ -126,9 +142,13 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
                 lightEndHour,   lightEndMinute,
                 lightOnlyIfDark
             );
-          } else if (cmd == "TIME_SYNC") {
-            // Pokud byste chtěli přebírat čas z Hubu, tady ho zpracujete.
-            // (Zde nepotřebujeme, protože bereme NTP.)
+          } else if (cmd == "INIT_TIME") {
+            // Přijímáme epochTime z hubu
+            unsigned long epoch = doc["epochTime"] | 0UL;
+            setEpochTime(epoch); 
+            
+            Serial.print("[WS] Přijal INIT_TIME, epoch = ");
+            Serial.println(epoch);
           }
         }
       }
@@ -165,37 +185,10 @@ void setup() {
     Serial.print("[WiFi] DNS:        ");
     Serial.println(WiFi.dnsIP());
 
-    // Zkusíme nejprve zjistit, zda funguje DNS překlad
-    IPAddress ntpServerIP;
-    if (WiFi.hostByName(ntpServer, ntpServerIP) == 1) {
-      Serial.print("[NTP] DNS OK, NTP server: ");
-      Serial.println(ntpServerIP);
-    } else {
-      Serial.print("[NTP] Nelze přeložit NTP server: ");
-      Serial.println(ntpServer);
-    }
+    unsigned long now = getCurrentEpochTime();
+    Serial.print("Aktuální čas: ");
+    Serial.println(now);
 
-    // Nastavíme parametry pro NTP a spustíme synchronizaci
-    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-    Serial.println("[NTP] Připojuji se k NTP serveru...");
-    delay(2000);
-
-    // Otestujeme, zda jsme čas úspěšně získali
-    int tries = 0;
-    while (!time(nullptr) && tries < 15) {
-      Serial.println("[NTP] Čekám na čas...");
-      delay(1000);
-      tries++;
-    }
-    if (time(nullptr)) {
-      Serial.println("[NTP] Synchronizace času OK");
-      // Můžeme vypsat datum/čas
-      time_t now = time(nullptr);
-      Serial.print("[NTP] Lokální čas: ");
-      Serial.println(ctime(&now));
-    } else {
-      Serial.println("[NTP] Nepovedlo se získat čas (vypršel čas).");
-    }
   } else {
     Serial.println("\n[WiFi] Nepodařilo se připojit k WiFi (timeout).");
   }

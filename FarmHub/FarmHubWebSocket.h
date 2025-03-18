@@ -42,6 +42,19 @@ void broadcastLightSettings() {
   ws.textAll(msg);
 }
 
+void sendInitTime(AsyncWebSocketClient *client) {
+  // Získání aktuálního času (epoch time) z interního RTC/časového nastavení
+  time_t now = time(nullptr);
+
+  StaticJsonDocument<128> doc;
+  doc["cmd"] = "INIT_TIME";
+  doc["epochTime"] = (unsigned long)now;  // Příklad: 1679053123
+
+  String msg;
+  serializeJson(doc, msg);
+  client->text(msg); // Odeslání danému klientovi
+}
+
 // Obsluha událostí na WebSocketu
 static inline void onWsEvent(AsyncWebSocket *server,
                              AsyncWebSocketClient *client,
@@ -54,6 +67,7 @@ static inline void onWsEvent(AsyncWebSocket *server,
     Serial.printf("Client #%u connected from %s\n", 
                   client->id(), client->remoteIP().toString().c_str());
     client->text("{\"msg\":\"Welcome sensor!\"}");
+    sendInitTime(client);
   }
   else if (type == WS_EVT_DISCONNECT) {
     Serial.printf("Client #%u disconnected.\n", client->id());
