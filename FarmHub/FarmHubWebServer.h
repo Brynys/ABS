@@ -93,6 +93,13 @@ static const char PAGE_FOOTER[] PROGMEM = R"rawliteral(
 static const char CHART_JS[] PROGMEM = R"rawliteral(
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
+function formatTimeFromSeconds(epochSec) {
+  const dt = new Date(epochSec * 1000); // epochSec je v sekundách, Date potřebuje ms
+  const h = String(dt.getHours()).padStart(2, '0');
+  const m = String(dt.getMinutes()).padStart(2, '0');
+  const s = String(dt.getSeconds()).padStart(2, '0');
+  return h + ':' + m + ':' + s;
+}
 function drawSoilChart(labels, dataSoil) {
   const ctxSoil = document.getElementById('chartSoil').getContext('2d');
   new Chart(ctxSoil, {
@@ -111,7 +118,16 @@ function drawSoilChart(labels, dataSoil) {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
-        x: { title: { display: true, text: 'Unix time (s)'} },
+        x: {
+          type: 'linear',
+          title: { display: true, text: 'Čas' },
+          ticks: {
+            // value je číslo z "labels" (epoch time v sekundách)
+            callback: function(value, index, ticks) {
+              return formatTimeFromSeconds(value);
+            }
+          }
+        },
         y: { suggestedMin: 0, suggestedMax: 100 }
       }
     }
@@ -135,7 +151,15 @@ function drawTempChart(labels, dataTemp) {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
-        x: { title: { display: true, text: 'Unix time (s)'} }
+        x: {
+          type: 'linear',
+          title: { display: true, text: 'Čas' },
+          ticks: {
+            callback: function(value, index, ticks) {
+              return formatTimeFromSeconds(value);
+            }
+          }
+        }
       }
     }
   });
@@ -158,7 +182,15 @@ function drawHumChart(labels, dataHum) {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
-        x: { title: { display: true, text: 'Unix time (s)'} },
+        x: {
+          type: 'linear',
+          title: { display: true, text: 'Čas' },
+          ticks: {
+            callback: function(value, index, ticks) {
+              return formatTimeFromSeconds(value);
+            }
+          }
+        },
         y: { suggestedMin: 0, suggestedMax: 100 }
       }
     }
@@ -182,7 +214,15 @@ function drawLightChart(labels, dataLight) {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
-        x: { title: { display: true, text: 'Unix time (s)'} }
+        x: {
+          type: 'linear',
+          title: { display: true, text: 'Čas' },
+          ticks: {
+            callback: function(value, index, ticks) {
+              return formatTimeFromSeconds(value);
+            }
+          }
+        }
       }
     }
   });
